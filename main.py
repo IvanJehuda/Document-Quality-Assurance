@@ -55,19 +55,25 @@ Pipeline:
 """
 
 import logging
+import re
 from pathlib import Path
 
+from typing import List
+
 from fastapi import FastAPI, File, HTTPException, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, PlainTextResponse
 
 from db import DB_PATH, fetch_table_rows, get_readonly_db, list_tables
 from excel_ingestion import ingest_bytes
-from llm_provider import get_llm
+from llm_provider import get_llm, get_vision_llm
 from orchestrator import verify_document
-from pdf_extraction import extract_text_from_pdf
+from paired_verifier import verify_paired
+from pdf_extraction import MIN_USEFUL_CHARS, extract_text_from_pdf, extract_text_from_pdf_vision_async
 from schemas import (
     ClaimRequest,
     DocumentRequest,
+    FactVerificationResult,
+    PairedVerificationResponse,
     TableDataResponse,
     TableListResponse,
     UploadExcelSourceResponse,
@@ -78,6 +84,8 @@ from verifier import build_judge_chain, build_sql_chain, verify_claim
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("fact-checker")
+
+_PAGE_MARKER_RE = re.compile(r'\[== Halaman \d+ ==\]')
 
 app = FastAPI(
     title="Fact-Checker PoC",
@@ -138,6 +146,18 @@ async def verify_document_pdf_endpoint(file: UploadFile = File(...)) -> VerifyDo
         logger.warning("PDF text extraction failed for upload %r: %s", file.filename, exc)
         raise HTTPException(status_code=400, detail=f"Could not read PDF: {exc}") from exc
 
+    content_chars = len(_PAGE_MARKER_RE.sub("", document).strip())
+    if content_chars < MIN_USEFUL_CHARS:
+        logger.warning(
+            "PDF upload %r yielded only %d usable chars - no text layer / scanned PDF (no OCR here).",
+            file.filename, content_chars,
+        )
+        raise HTTPException(
+            status_code=400,
+            detail="No extractable text found in the PDF. Scanned/image-only PDFs are not "
+                   "supported by this endpoint (no OCR).",
+        )
+
     try:
         return verify_document(document)
     except FileNotFoundError as exc:
@@ -146,6 +166,60 @@ async def verify_document_pdf_endpoint(file: UploadFile = File(...)) -> VerifyDo
     except Exception as exc:
         logger.exception("Document verification pipeline failed")
         raise HTTPException(status_code=502, detail=f"Document verification failed: {exc}") from exc
+
+
+@app.post("/api/extract-pdf-text")
+async def extract_pdf_text_endpoint(
+    file: UploadFile = File(...),
+    use_vision: bool = False,
+) -> dict:
+    """Debug endpoint: extract and return raw text from a PDF without running verification.
+
+    Returns the extracted text plus metadata so you can inspect exactly what the
+    pipeline sees before fact extraction begins.
+
+    Query params:
+      use_vision=false  (default) — pypdf only, fast, no LLM cost
+      use_vision=true   — force vision extraction even if pypdf succeeds
+    """
+    pdf_bytes = await file.read()
+    filename = file.filename or "upload.pdf"
+
+    try:
+        text = extract_text_from_pdf(pdf_bytes)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Gagal baca PDF: {exc}") from exc
+
+    content_chars = len(_PAGE_MARKER_RE.sub("", text).strip())
+    page_markers = _PAGE_MARKER_RE.findall(text)
+    method = "pypdf"
+
+    needs_vision = use_vision or content_chars < MIN_USEFUL_CHARS
+    if needs_vision:
+        try:
+            vision_llm = get_vision_llm()
+        except RuntimeError as exc:
+            if content_chars < MIN_USEFUL_CHARS:
+                raise HTTPException(status_code=400, detail=f"PDF butuh vision extraction tapi: {exc}") from exc
+            vision_llm = None
+
+        if vision_llm is not None:
+            try:
+                text = await extract_text_from_pdf_vision_async(pdf_bytes, vision_llm)
+                content_chars = len(_PAGE_MARKER_RE.sub("", text).strip())
+                page_markers = _PAGE_MARKER_RE.findall(text)
+                method = f"vision ({type(vision_llm).__name__})"
+            except Exception as exc:
+                logger.exception("Vision extraction failed for %r", filename)
+                raise HTTPException(status_code=502, detail=f"Vision extraction gagal: {exc}") from exc
+
+    return {
+        "filename": filename,
+        "method": method,
+        "page_count": len(page_markers),
+        "char_count": content_chars,
+        "text": text,
+    }
 
 
 @app.post("/api/upload-excel-source", response_model=UploadExcelSourceResponse)
@@ -168,6 +242,49 @@ async def upload_excel_source_endpoint(file: UploadFile = File(...)) -> UploadEx
         llm_escalated=summary.llm_escalated,
         defaulted=summary.defaulted,
     )
+
+
+@app.post("/api/verify-paired", response_model=PairedVerificationResponse)
+async def verify_paired_endpoint(
+    pdf_file: UploadFile = File(..., description="PDF report to verify."),
+    excel_file: List[UploadFile] = File(..., description="One or more .xls/.xlsx statistical tables."),
+    sheet_names: str = "I.1",
+) -> PairedVerificationResponse:
+    """Verify all quantitative claims in a PDF report against one or more BI Excel tables.
+
+    No SQL is generated — comparisons are direct lookups into the parsed Excel tables.
+    When multiple Excel files are uploaded, claims are checked against each source in order;
+    the first source that contains the matching metric label is used for the verdict.
+
+    sheet_names: comma-separated sheet names, one per Excel file (e.g. "I.1,II.1").
+    If fewer sheet names than files are provided, the last sheet name is reused for remaining files.
+    """
+    pdf_bytes = await pdf_file.read()
+
+    sheets = [s.strip() for s in sheet_names.split(",") if s.strip()] or ["I.1"]
+
+    excel_sources = []
+    for i, ef in enumerate(excel_file):
+        sheet = sheets[i] if i < len(sheets) else sheets[-1]
+        excel_sources.append((await ef.read(), sheet, ef.filename or f"table_{i+1}.xls"))
+
+    try:
+        vision_llm = None
+        try:
+            vision_llm = get_vision_llm()
+        except RuntimeError:
+            logger.warning("Vision LLM not available (GOOGLE_API_KEY missing); vision fallback disabled.")
+
+        return await verify_paired(
+            pdf_bytes=pdf_bytes,
+            excel_sources=excel_sources,
+            llm=get_llm(temperature=0.0),
+            pdf_filename=pdf_file.filename or "report.pdf",
+            vision_llm=vision_llm,
+        )
+    except Exception as exc:
+        logger.exception("Paired verification failed")
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.get("/api/tables", response_model=TableListResponse)

@@ -1,292 +1,813 @@
 <!DOCTYPE html>
 <html lang="id">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
 <title>Document Quality Assurance</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" rel="stylesheet"/>
 <style>
-  :root {
-    --accent: #3a5a9c;
-    --accent-hover: #2f4a82;
-    --accent-soft: #eaeefa;
-    --green: #1a7f37;
-    --red: #cf222e;
-    --amber: #9a6700;
-    --gray: #6e7781;
-    --border: #d8dee4;
-    --bg-page: #eef0f3;
-    --bg-surface: #ffffff;
-    --bg-soft: #f6f8fa;
-    --text: #1f2328;
-    --text-soft: #6e7781;
-    --radius: 10px;
-    --shadow: 0 1px 2px rgba(31, 35, 40, 0.04), 0 10px 30px rgba(31, 35, 40, 0.08);
-    --shadow-sm: 0 1px 2px rgba(31, 35, 40, 0.06);
-  }
+:root {
+  --navy-950: #070F1D;
+  --navy-900: #0B1F3A;
+  --navy-800: #112848;
+  --navy-700: #1A3A68;
+  --blue-600: #1D4ED8;
+  --blue-500: #2563EB;
+  --blue-400: #3B82F6;
+  --blue-200: #BFDBFE;
+  --blue-100: #DBEAFE;
+  --blue-50:  #EFF6FF;
+  --page-bg:  #F2F6FF;
+  --white:    #FFFFFF;
+  --border:   #DDE5F5;
+  --border-dark: #B8CBEF;
+  --text-900: #0B1F3A;
+  --text-500: #3D5078;
+  --text-400: #7589A8;
+  --green-700: #047857; --green-100: #D1FAE5;
+  --red-700:   #B91C1C; --red-100:   #FEE2E2;
+  --amber-700: #92400E; --amber-100: #FEF3C7;
+  --r: 6px; --r-lg: 8px; --r-xl: 10px;
+}
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; overflow: hidden; }
+body {
+  font-family: 'Inter', system-ui, sans-serif;
+  font-size: 14px; line-height: 1.5;
+  color: var(--text-900); background: var(--page-bg);
+  -webkit-font-smoothing: antialiased;
+}
+textarea, input, select, button { font-family: inherit; }
 
-  * { box-sizing: border-box; }
+/* ── Layout ── */
+.app { display: flex; height: 100%; overflow: hidden; }
 
-  body {
-    font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-    margin: 0;
-    padding: 2.5rem 1rem;
-    color: var(--text);
-    background: var(--bg-page);
-  }
+/* ── Sidebar ── */
+.sidebar {
+  width: 232px; flex-shrink: 0; height: 100%;
+  background: linear-gradient(175deg, #0E2347 0%, #080F1E 100%);
+  display: flex; flex-direction: column;
+  box-shadow: 2px 0 20px rgba(0,0,0,0.25);
+}
+.sidebar-brand {
+  display: flex; align-items: center; gap: 11px;
+  padding: 20px 16px 18px;
+  background: linear-gradient(135deg, rgba(37,99,235,0.18) 0%, transparent 70%);
+  border-bottom: 1px solid rgba(255,255,255,0.07);
+}
+.brand-icon {
+  width: 38px; height: 38px; flex-shrink: 0; border-radius: 10px;
+  background: linear-gradient(135deg, #3B82F6, #1D4ED8);
+  box-shadow: 0 4px 14px rgba(37,99,235,0.45);
+  display: flex; align-items: center; justify-content: center;
+}
+.brand-icon .material-symbols-outlined { color: white; font-size: 21px; }
+.brand-name { font-size: 13px; font-weight: 700; color: white; line-height: 1.25; letter-spacing: -0.01em; }
+.brand-sub  { font-size: 11px; color: rgba(255,255,255,0.38); margin-top: 1px; }
 
-  .app-shell {
-    max-width: 800px;
-    margin: 0 auto;
-    background: var(--bg-surface);
-    border: 1px solid var(--border);
-    border-radius: calc(var(--radius) + 6px);
-    box-shadow: var(--shadow);
-    padding: 2rem 2.25rem 2.25rem;
-  }
+.sidebar-nav { flex: 1; padding: 10px 8px; display: flex; flex-direction: column; gap: 1px; overflow-y: auto; }
+.nav-section-label {
+  font-size: 10px; font-weight: 700; letter-spacing: 0.09em;
+  text-transform: uppercase; color: rgba(255,255,255,0.25);
+  padding: 12px 10px 5px;
+}
+.nav-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 12px; border-radius: var(--r);
+  cursor: pointer; border: none; background: none;
+  width: 100%; text-align: left; text-decoration: none;
+  font-size: 13px; font-weight: 500;
+  transition: background 0.15s, color 0.15s;
+  position: relative;
+}
+.nav-item .material-symbols-outlined { font-size: 20px; flex-shrink: 0; transition: color 0.15s; }
+.nav-item.inactive-nav { color: rgba(255,255,255,0.5); }
+.nav-item.inactive-nav:hover { background: rgba(255,255,255,0.07); color: rgba(255,255,255,0.9); }
+.nav-item.active-nav {
+  background: linear-gradient(90deg, rgba(59,130,246,0.28) 0%, rgba(59,130,246,0.08) 100%);
+  color: white; font-weight: 600;
+  box-shadow: inset 3px 0 0 var(--blue-400);
+}
+.nav-item.active-nav .material-symbols-outlined { color: var(--blue-400); }
 
-  .app-header { margin-bottom: 1.5rem; }
-  h1 { font-size: 1.45rem; letter-spacing: -0.01em; margin: 0 0 0.3rem; }
+.sidebar-footer {
+  padding: 8px; border-top: 1px solid rgba(255,255,255,0.07);
+}
+.sidebar-footer .nav-item { font-size: 12px; color: rgba(255,255,255,0.35); }
+.sidebar-footer .nav-item:hover { color: rgba(255,255,255,0.6); background: rgba(255,255,255,0.05); }
 
-  .tabs {
-    display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    gap: 0.25rem;
-    background: var(--bg-soft);
-    border: 1px solid var(--border);
-    padding: 0.3rem;
-    border-radius: calc(var(--radius) + 4px);
-    margin-bottom: 1.5rem;
-  }
-  .tab-btn {
-    background: none;
-    border: none;
-    padding: 0.55rem 0.4rem;
-    border-radius: var(--radius);
-    cursor: pointer;
-    font-size: 0.86rem;
-    font-weight: 500;
-    color: var(--text-soft);
-    transition: background-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
-  }
-  .tab-btn:hover:not(.active) { color: var(--text); }
-  .tab-btn.active {
-    background: var(--bg-surface);
-    color: var(--accent);
-    font-weight: 600;
-    box-shadow: var(--shadow-sm);
-  }
-  .tab-btn:focus-visible, button:focus-visible, select:focus-visible,
-  textarea:focus-visible, input:focus-visible {
-    outline: 2px solid var(--accent);
-    outline-offset: 2px;
-  }
+/* ── Main ── */
+.main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
 
-  @media (max-width: 480px) {
-    .tabs { grid-template-columns: repeat(2, 1fr); }
-  }
+.topbar {
+  height: 54px; background: var(--white);
+  border-bottom: 1px solid var(--border);
+  display: flex; align-items: center;
+  padding: 0 28px; gap: 14px; flex-shrink: 0;
+  box-shadow: 0 1px 4px rgba(11,31,58,0.05);
+}
+.topbar-title {
+  font-size: 15px; font-weight: 800; letter-spacing: -0.02em;
+  background: linear-gradient(135deg, var(--navy-900), var(--blue-600));
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+}
+.topbar-divider { width: 1px; height: 18px; background: var(--border); }
+.topbar-sub {
+  font-size: 11px; font-weight: 600; text-transform: uppercase;
+  letter-spacing: 0.08em; color: var(--text-400);
+}
 
-  .panel { display: none; }
-  .panel.active { display: block; }
+.content {
+  flex: 1; overflow-y: auto; padding: 28px;
+  scrollbar-width: thin; scrollbar-color: var(--border) transparent;
+}
+.content::-webkit-scrollbar { width: 5px; }
+.content::-webkit-scrollbar-track { background: transparent; }
+.content::-webkit-scrollbar-thumb { background: var(--border-dark); border-radius: 2px; }
 
-  textarea, input[type="file"], select.table-select {
-    width: 100%;
-    padding: 0.65rem 0.75rem;
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    font-family: inherit;
-    font-size: 0.95rem;
-    margin-bottom: 0.75rem;
-    background: var(--bg-surface);
-    color: var(--text);
-  }
-  textarea { min-height: 120px; resize: vertical; }
-  textarea::placeholder { color: var(--text-soft); }
-  textarea:focus, select.table-select:focus {
-    outline: none;
-    border-color: var(--accent);
-    box-shadow: 0 0 0 3px var(--accent-soft);
-  }
+.page-footer {
+  height: 40px; background: var(--white); border-top: 1px solid var(--border);
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0 28px; flex-shrink: 0;
+}
+.footer-text { font-size: 11px; color: var(--text-400); }
+.footer-links { display: flex; gap: 20px; }
+.footer-links a { font-size: 11px; color: var(--text-400); cursor: pointer; text-decoration: none; transition: color 0.12s; }
+.footer-links a:hover { color: var(--navy-900); }
 
-  button.submit {
-    background: var(--accent);
-    color: #fff;
-    border: none;
-    padding: 0.6rem 1.2rem;
-    border-radius: var(--radius);
-    cursor: pointer;
-    font-size: 0.95rem;
-    font-weight: 500;
-    transition: background-color 0.15s ease, transform 0.05s ease;
-  }
-  button.submit:hover:not(:disabled) { background: var(--accent-hover); }
-  button.submit:active:not(:disabled) { transform: scale(0.98); }
-  button.submit:disabled { background: var(--gray); cursor: not-allowed; }
+/* ── Panels ── */
+.panel { display: none; }
+.panel.active { display: block; }
+.panel-wrap { max-width: 680px; margin: 0 auto; }
+.panel-wrap-wide { max-width: 1040px; margin: 0 auto; }
 
-  .result-box { margin-top: 1.25rem; }
+/* ── Cards ── */
+.card {
+  background: var(--white);
+  border: 1px solid var(--border);
+  border-radius: var(--r-xl);
+  box-shadow: 0 2px 12px rgba(11,31,58,0.07), 0 1px 3px rgba(11,31,58,0.04);
+  overflow: hidden; margin-bottom: 18px;
+}
+.card-header {
+  padding: 20px 22px 18px;
+  border-bottom: 1px solid var(--border);
+  background: linear-gradient(180deg, #FFFFFF 0%, #FAFCFF 100%);
+}
+.card-footer {
+  padding: 13px 22px;
+  background: linear-gradient(180deg, #F6F9FF 0%, #EEF3FF 100%);
+  border-top: 1px solid var(--border);
+  display: flex; justify-content: flex-end; align-items: center;
+}
+.form-label {
+  display: block; font-size: 11px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.08em;
+  color: var(--text-500); margin-bottom: 9px;
+}
 
-  .error-banner {
-    background: var(--bg-soft);
-    border-left: 3px solid var(--red);
-    color: var(--red);
-    padding: 0.65rem 0.85rem;
-    border-radius: var(--radius);
-    margin-top: 1rem;
-    font-size: 0.9rem;
-  }
+/* ── Form elements ── */
+textarea, input[type="text"], select {
+  width: 100%; background: var(--page-bg);
+  border: 1px solid var(--border); border-radius: var(--r);
+  padding: 9px 13px; font-size: 13px; color: var(--text-900);
+  outline: none; transition: border-color 0.15s, box-shadow 0.15s;
+}
+textarea:focus, input[type="text"]:focus, select:focus {
+  border-color: var(--blue-500);
+  box-shadow: 0 0 0 3px rgba(37,99,235,0.13);
+  background: var(--white);
+}
+textarea::placeholder, input[type="text"]::placeholder { color: var(--text-400); }
+textarea { resize: vertical; min-height: 90px; }
+select { cursor: pointer; }
 
-  .summary-line {
-    font-size: 0.95rem;
-    margin-bottom: 1rem;
-    padding: 0.7rem 0.9rem;
-    background: var(--accent-soft);
-    border-radius: var(--radius);
-    color: var(--text);
-  }
+/* ── Buttons ── */
+.run-btn {
+  background: linear-gradient(135deg, #1e4fba, #0B1F3A);
+  color: white; border: none;
+  padding: 9px 20px; border-radius: var(--r);
+  font-size: 13px; font-weight: 700;
+  display: inline-flex; align-items: center; gap: 7px;
+  cursor: pointer; font-family: inherit;
+  box-shadow: 0 2px 8px rgba(11,31,58,0.2);
+  transition: all 0.15s;
+  letter-spacing: 0.01em;
+}
+.run-btn:hover:not(:disabled) {
+  background: linear-gradient(135deg, #2563EB, #1D4ED8);
+  box-shadow: 0 4px 14px rgba(37,99,235,0.35);
+  transform: translateY(-1px);
+}
+.run-btn:active:not(:disabled) { transform: scale(0.97) translateY(0); }
+.run-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.run-btn .material-symbols-outlined { font-size: 16px; }
 
-  .claim-card {
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 0.95rem 1.1rem;
-    margin-bottom: 0.8rem;
-    background: var(--bg-soft);
-  }
-  .claim-text { font-weight: 600; margin-bottom: 0.55rem; }
+/* ── Dropzones ── */
+.dropzone {
+  border: 2px dashed var(--border); border-radius: var(--r-lg);
+  padding: 38px 20px;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  cursor: pointer; text-align: center;
+  transition: all 0.15s;
+  background: linear-gradient(180deg, #FAFCFF, var(--page-bg));
+}
+.dropzone:hover, .dropzone.drag-over {
+  border-color: var(--blue-400);
+  background: linear-gradient(180deg, #F0F6FF, #E8F0FF);
+  box-shadow: 0 0 0 4px rgba(59,130,246,0.08);
+}
+.dz-icon {
+  width: 56px; height: 56px;
+  background: linear-gradient(135deg, var(--blue-100), var(--blue-50));
+  border-radius: 10px; border: 1px solid var(--blue-200);
+  display: flex; align-items: center; justify-content: center; margin-bottom: 12px;
+}
+.dz-icon .material-symbols-outlined { color: var(--blue-500); font-size: 26px; }
+.dz-title { font-size: 13px; font-weight: 600; color: var(--text-900); margin-bottom: 3px; }
+.dz-sub   { font-size: 11px; color: var(--text-400); }
+.dz-filename { font-size: 11px; color: var(--blue-500); margin-top: 8px; font-weight: 600; }
 
-  .badge {
-    display: inline-block;
-    font-size: 0.72rem;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.03em;
-    padding: 0.2rem 0.6rem;
-    border-radius: 999px;
-    color: #fff;
-    margin-bottom: 0.55rem;
-  }
-  .badge.Entailed { background: var(--green); }
-  .badge.Refuted { background: var(--red); }
-  .badge.Inconclusive { background: var(--amber); }
-  .badge.Error { background: var(--gray); }
+.dropzone-sm {
+  border: 2px dashed var(--border); border-radius: var(--r);
+  padding: 16px 12px;
+  display: flex; flex-direction: column; align-items: center;
+  cursor: pointer; gap: 5px;
+  background: linear-gradient(180deg, #FAFCFF, var(--page-bg));
+  transition: all 0.15s; text-align: center;
+}
+.dropzone-sm:hover, .dropzone-sm.drag-over {
+  border-color: var(--blue-400);
+  background: linear-gradient(180deg, #EEF5FF, #E6F0FF);
+}
+.dropzone-sm .material-symbols-outlined { color: var(--blue-500); font-size: 22px; }
+.dropzone-sm .dz-sub     { font-size: 11px; color: var(--text-400); }
+.dropzone-sm .dz-filename { font-size: 11px; color: var(--blue-500); font-weight: 600; }
 
-  .reasoning { font-size: 0.9rem; line-height: 1.5; margin: 0.4rem 0; }
+/* ── Upload row ── */
+.upload-row { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+@media (max-width: 560px) { .upload-row { grid-template-columns: 1fr; } }
+.upload-field { display: flex; flex-direction: column; gap: 7px; }
+.upload-label {
+  font-size: 10px; font-weight: 700; color: var(--text-500);
+  text-transform: uppercase; letter-spacing: 0.07em;
+}
+.sheet-row { display: flex; align-items: center; gap: 12px; margin-top: 10px; }
+.sheet-row label { font-size: 13px; color: var(--text-500); white-space: nowrap; }
 
-  pre.sql {
-    position: relative;
-    background: #0d1117;
-    color: #c9d1d9;
-    font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
-    padding: 1.6rem 0.8rem 0.7rem;
-    border-radius: var(--radius);
-    font-size: 0.82rem;
-    overflow-x: auto;
-    margin: 0.5rem 0 0;
-  }
-  pre.sql::before {
-    content: "SQL";
-    position: absolute;
-    top: 0.5rem;
-    left: 0.8rem;
-    font-size: 0.62rem;
-    font-weight: 700;
-    letter-spacing: 0.08em;
-    color: rgba(201, 209, 217, 0.5);
-  }
+/* ── Result: claim cards ── */
+.claim-card {
+  background: var(--white);
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--border);
+  border-radius: var(--r-lg);
+  padding: 15px 18px; margin-bottom: 10px;
+  box-shadow: 0 2px 8px rgba(11,31,58,0.05);
+  transition: box-shadow 0.15s;
+}
+.claim-card:hover { box-shadow: 0 4px 16px rgba(11,31,58,0.09); }
+.claim-card.Entailed     { border-left-color: #22C55E; background: linear-gradient(to right, #F0FDF6, white 60%); }
+.claim-card.Refuted      { border-left-color: #EF4444; background: linear-gradient(to right, #FFF5F5, white 60%); }
+.claim-card.Inconclusive { border-left-color: #F59E0B; background: linear-gradient(to right, #FFFBF0, white 60%); }
+.claim-card.Error        { border-left-color: #9CA3AF; }
+.claim-text { font-weight: 600; font-size: 13px; color: var(--text-900); margin-bottom: 7px; line-height: 1.5; }
 
-  .loading {
-    color: var(--text-soft);
-    font-size: 0.9rem;
-    margin-top: 0.75rem;
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-  }
-  .loading::before {
-    content: "";
-    width: 0.85rem;
-    height: 0.85rem;
-    border: 2px solid var(--border);
-    border-top-color: var(--accent);
-    border-radius: 50%;
-    animation: spin 0.7s linear infinite;
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .loading::before { animation: none; }
-  }
-  @keyframes spin { to { transform: rotate(360deg); } }
+.badge {
+  display: inline-flex; align-items: center;
+  font-size: 10px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.07em;
+  padding: 3px 8px; border-radius: 4px; margin-bottom: 7px;
+}
+.badge.Entailed     { background: linear-gradient(135deg, #D1FAE5, #A7F3D0); color: var(--green-700); }
+.badge.Refuted      { background: linear-gradient(135deg, #FEE2E2, #FECACA); color: var(--red-700); }
+.badge.Inconclusive { background: linear-gradient(135deg, #FEF3C7, #FDE68A); color: var(--amber-700); }
+.badge.Error        { background: #F3F4F6; color: #374151; }
 
-  .table-meta { font-size: 0.85rem; color: var(--text-soft); margin-bottom: 0.5rem; }
-  .table-scroll { overflow-x: auto; border: 1px solid var(--border); border-radius: var(--radius); }
-  table.data-table { border-collapse: collapse; width: 100%; font-size: 0.85rem; white-space: nowrap; }
-  table.data-table th, table.data-table td {
-    padding: 0.45rem 0.7rem; border-bottom: 1px solid var(--border); text-align: left;
-  }
-  table.data-table th {
-    background: var(--bg-soft);
-    position: sticky;
-    top: 0;
-    font-weight: 600;
-    color: var(--text-soft);
-    text-transform: uppercase;
-    font-size: 0.72rem;
-    letter-spacing: 0.03em;
-  }
-  table.data-table tbody tr:hover { background: var(--bg-soft); }
+.reasoning { font-size: 12px; line-height: 1.65; color: var(--text-500); margin: 4px 0 2px; }
 
-  .pager { display: flex; justify-content: space-between; margin-top: 0.6rem; }
-  .pager button.submit { padding: 0.45rem 0.9rem; font-size: 0.85rem; }
-  .pager button:disabled { background: var(--gray); cursor: not-allowed; }
+pre.sql {
+  position: relative;
+  background: linear-gradient(180deg, #0D1117, #111827);
+  color: #C9D1D9;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  padding: 26px 14px 12px; border-radius: var(--r);
+  font-size: 11px; overflow-x: auto; margin: 10px 0 0;
+  border: 1px solid rgba(255,255,255,0.06);
+}
+pre.sql::before {
+  content: "SQL"; position: absolute; top: 9px; left: 14px;
+  font-size: 9px; font-weight: 700; letter-spacing: 0.1em;
+  color: rgba(59,130,246,0.5);
+}
+
+/* ── Loading / error / summary ── */
+.loading {
+  color: var(--text-500); font-size: 13px;
+  display: flex; align-items: center; gap: 9px; padding: 14px 0;
+}
+.loading::before {
+  content: ""; width: 15px; height: 15px;
+  border: 2px solid var(--border-dark);
+  border-top-color: var(--blue-500);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite; flex-shrink: 0;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.error-banner {
+  background: linear-gradient(135deg, #FFF1F2, #FFF5F5);
+  border: 1px solid #FECACA;
+  border-left: 3px solid #EF4444;
+  color: #991B1B; padding: 11px 15px;
+  border-radius: var(--r); margin-top: 10px; font-size: 13px;
+}
+.summary-line {
+  font-size: 13px; margin-bottom: 14px; padding: 11px 15px;
+  background: linear-gradient(135deg, #EFF6FF, #F0F8FF);
+  border: 1px solid var(--blue-100); border-radius: var(--r-lg);
+  color: var(--text-900); line-height: 1.6;
+}
+.muted-text { font-size: 13px; color: var(--text-400); }
+
+/* ── Data table card ── */
+.data-card {
+  background: var(--white); border: 1px solid var(--border);
+  border-radius: var(--r-xl);
+  box-shadow: 0 2px 12px rgba(11,31,58,0.07); overflow: hidden;
+}
+.table-meta { font-size: 11px; color: var(--text-500); padding: 13px 22px 5px; }
+.table-scroll { overflow-x: auto; margin: 0 22px 16px; border: 1px solid var(--border); border-radius: var(--r); }
+.table-pagination { display: flex; justify-content: space-between; align-items: center; padding: 0 22px 18px; }
+
+table.data-table { border-collapse: collapse; width: 100%; font-size: 12px; white-space: nowrap; }
+table.data-table th {
+  background: linear-gradient(180deg, #F3F7FF, #EEF3FF);
+  padding: 7px 12px; border-bottom: 1px solid var(--border); text-align: left;
+  font-weight: 700; color: var(--text-500); text-transform: uppercase;
+  font-size: 10px; letter-spacing: 0.06em; position: sticky; top: 0;
+}
+table.data-table td { padding: 7px 12px; border-bottom: 1px solid var(--border); color: var(--text-900); }
+table.data-table tbody tr:last-child td { border-bottom: none; }
+table.data-table tbody tr:hover { background: var(--blue-50); }
+
+/* ── Multi-Excel source entries ── */
+.excel-source-entry { display: flex; flex-direction: column; gap: 5px; margin-bottom: 8px; }
+.excel-source-entry:last-of-type { margin-bottom: 0; }
+.source-entry-header { display: flex; align-items: center; gap: 6px; }
+.source-entry-header .dropzone-sm { flex: 1; min-width: 0; }
+.remove-excel-btn {
+  flex-shrink: 0; width: 26px; height: 26px; border-radius: 50%;
+  border: 1px solid var(--border); background: var(--white);
+  cursor: pointer; display: flex; align-items: center; justify-content: center;
+  color: var(--text-400); transition: color 0.15s, border-color 0.15s;
+}
+.remove-excel-btn:hover { color: #DC2626; border-color: #DC2626; }
+.remove-excel-btn .material-symbols-outlined { font-size: 14px; }
+.source-sheet-row { display: flex; align-items: center; gap: 8px; }
+.source-sheet-row label { font-size: 11px; color: var(--text-500); white-space: nowrap; }
+.source-sheet-row input { width: 72px; }
+.add-excel-btn {
+  display: flex; align-items: center; gap: 4px; margin-top: 8px;
+  font-size: 12px; color: var(--blue-500); cursor: pointer;
+  border: none; background: none; padding: 0; font-weight: 500;
+}
+.add-excel-btn:hover { color: var(--blue-600); }
+.add-excel-btn .material-symbols-outlined { font-size: 15px; }
+.source-badge {
+  display: inline-flex; align-items: center; gap: 3px;
+  font-size: 10px; font-weight: 600; color: var(--text-500);
+  background: var(--blue-50); border: 1px solid var(--blue-100);
+  border-radius: 4px; padding: 1px 6px; white-space: nowrap;
+  max-width: 240px; overflow: hidden; text-overflow: ellipsis;
+}
+
+/* ── Paired legacy (kept for safety) ── */
+.na { color: var(--text-400); }
+.page-badge {
+  display: inline-flex; align-items: center;
+  font-size: 10px; font-weight: 700;
+  background: linear-gradient(135deg, #EEF3FF, #E6EEFF);
+  color: var(--navy-900); border: 1px solid var(--border);
+  padding: 2px 7px; border-radius: 4px; white-space: nowrap;
+}
+
+/* ── Filter bar ── */
+.filter-bar { display: flex; gap: 6px; margin-top: 28px; margin-bottom: 14px; flex-wrap: wrap; }
+.filter-btn {
+  background: var(--white); border: 1px solid var(--border);
+  border-radius: 999px; padding: 5px 14px; font-size: 11px;
+  font-weight: 500; color: var(--text-500); cursor: pointer;
+  transition: all 0.15s; font-family: inherit;
+}
+.filter-btn:hover { border-color: var(--navy-700); color: var(--navy-900); background: var(--blue-50); }
+.filter-btn.active {
+  background: linear-gradient(135deg, #1e4fba, #0B1F3A);
+  border-color: transparent; color: white; font-weight: 700;
+  box-shadow: 0 2px 8px rgba(11,31,58,0.22);
+}
+
+.material-symbols-outlined {
+  font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+  vertical-align: middle; line-height: 1;
+}
+
+/* ── Paired: report layout ── */
+.report-top {
+  display: flex; align-items: stretch; gap: 20px; margin-bottom: 18px;
+}
+.donut-wrap {
+  flex-shrink: 0; display: flex; align-items: center; justify-content: center;
+  background: linear-gradient(145deg, #FFFFFF, #F3F7FF);
+  border: 1px solid var(--border); border-radius: var(--r-xl);
+  padding: 20px; box-shadow: 0 2px 10px rgba(11,31,58,0.06);
+}
+.report-stats { display: flex; flex-direction: column; gap: 10px; flex: 1; }
+.stat-row { display: flex; gap: 10px; flex: 1; }
+.stat-card {
+  flex: 1; padding: 14px 16px; border-radius: var(--r-lg);
+  border: 1px solid var(--border);
+  display: flex; flex-direction: column; justify-content: center;
+}
+.stat-card.refuted      { background: linear-gradient(135deg, #FFF5F5, #FFF); border-left: 3px solid #EF4444; }
+.stat-card.entailed     { background: linear-gradient(135deg, #F0FDF9, #FFF); border-left: 3px solid #22C55E; }
+.stat-card.inconclusive { background: linear-gradient(135deg, #FFFBF0, #FFF); border-left: 3px solid #F59E0B; }
+.stat-card.total        { background: linear-gradient(135deg, #EEF3FF, #F6F9FF); border-left: 3px solid var(--blue-400); }
+.stat-num { font-size: 28px; font-weight: 800; line-height: 1; margin-bottom: 3px; letter-spacing: -0.03em; }
+.stat-card.refuted .stat-num      { color: #DC2626; }
+.stat-card.entailed .stat-num     { color: #16A34A; }
+.stat-card.inconclusive .stat-num { color: #D97706; }
+.stat-card.total .stat-num        { color: var(--navy-900); }
+.stat-label { font-size: 11px; color: var(--text-500); font-weight: 500; line-height: 1.4; }
+
+.fact-cards { display: flex; flex-direction: column; gap: 10px; }
+.fact-card {
+  background: var(--white); border: 1px solid var(--border);
+  border-left: 4px solid var(--border); border-radius: var(--r-lg);
+  padding: 15px 18px;
+  box-shadow: 0 1px 5px rgba(11,31,58,0.05);
+  transition: box-shadow 0.15s, transform 0.15s;
+}
+.fact-card:hover { box-shadow: 0 4px 16px rgba(11,31,58,0.09); transform: translateY(-1px); }
+.fact-card.Entailed     { border-left-color: #22C55E; background: linear-gradient(to right, #F0FDF7, white 55%); }
+.fact-card.Refuted      { border-left-color: #EF4444; background: linear-gradient(to right, #FFF4F4, white 55%); }
+.fact-card.Inconclusive { border-left-color: #F59E0B; background: linear-gradient(to right, #FFFBF0, white 55%); }
+.fact-card.hidden-fact  { display: none; }
+
+.fact-card-top {
+  display: flex; align-items: center; gap: 8px; margin-bottom: 10px; flex-wrap: wrap;
+}
+.fact-metric { font-size: 13px; font-weight: 700; color: var(--text-900); flex: 1; min-width: 120px; }
+.fact-period { font-size: 11px; color: var(--text-400); white-space: nowrap; flex-shrink: 0; }
+
+.fact-quote {
+  font-size: 12px; line-height: 1.7; color: var(--text-500);
+  font-style: italic; padding: 10px 14px;
+  background: linear-gradient(135deg, #F6F9FF, #F0F5FF);
+  border-radius: var(--r);
+  margin-bottom: 10px;
+  border-left: 3px solid var(--blue-200);
+}
+
+.fact-comparison {
+  display: flex; align-items: center; gap: 8px; font-size: 12px;
+  flex-wrap: wrap; padding-top: 4px; border-top: 1px solid var(--border);
+}
+.fact-val-label { color: var(--text-400); font-size: 11px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.05em; }
+.fact-val       { font-weight: 700; color: var(--text-900); }
+.fact-arrow     { color: var(--border-dark); font-size: 14px; }
+.fact-val.ok  { color: #16A34A; }
+.fact-val.bad { color: #DC2626; }
+
+/* ── Paired: single → split transition ── */
+
+/* Vertically center the form before results exist */
+#panel-paired.active {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: calc(100vh - 162px);
+}
+#panel-paired.has-results.active {
+  justify-content: flex-start;
+  align-items: stretch;
+}
+
+.paired-container {
+  max-width: 860px;
+  width: 100%;
+}
+.paired-result-area { margin-top: 18px; }
+
+/* Initial state: bigger dropzones before any results exist */
+.paired-container:not(.has-results) .dropzone-sm {
+  padding: 36px 24px;
+}
+.paired-container:not(.has-results) .dropzone-sm .material-symbols-outlined {
+  font-size: 36px;
+}
+.paired-container:not(.has-results) .dropzone-sm .dz-sub {
+  font-size: 12px;
+  margin-top: 6px;
+}
+.paired-container:not(.has-results) .upload-row {
+  gap: 20px;
+}
+.paired-container:not(.has-results) .upload-label {
+  font-size: 11px;
+}
+
+/* Split state — activated by JS after first successful result */
+
+/* Remove outer padding and let the paired layout fill the full content area */
+.content:has(#panel-paired.active.has-results) {
+  padding: 0;
+  overflow: hidden;
+}
+.content:has(#panel-paired.active.has-results) #panel-paired {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.paired-container.has-results {
+  max-width: none;
+  margin: 0;
+  display: grid;
+  grid-template-columns: 340px 1fr;
+  gap: 0;
+  align-items: stretch;
+  height: 100%;
+  overflow: hidden;
+}
+.paired-container.has-results .card-header {
+  padding: 16px;
+}
+.paired-container.has-results .upload-row {
+  gap: 8px;
+}
+.paired-container.has-results .paired-form-area {
+  padding: 20px;
+  overflow-y: auto;
+  border-right: 1px solid var(--border);
+  box-sizing: border-box;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-dark) transparent;
+}
+.paired-container.has-results .paired-result-area {
+  height: 100%;
+  max-height: 100%;
+  margin-top: 0;
+  overflow-y: auto;
+  padding: 20px;
+  box-sizing: border-box;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-dark) transparent;
+}
+.paired-container.has-results .paired-result-area::-webkit-scrollbar { width: 5px; }
+.paired-container.has-results .paired-result-area::-webkit-scrollbar-track { background: transparent; }
+.paired-container.has-results .paired-result-area::-webkit-scrollbar-thumb { background: var(--border-dark); border-radius: 2px; }
+
+@media (max-width: 900px) {
+  .paired-container.has-results {
+    grid-template-columns: 1fr;
+    height: auto;
+    overflow: visible;
+  }
+  .paired-container.has-results .paired-form-area {
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+  }
+  .paired-container.has-results .paired-result-area { height: auto; max-height: none; overflow-y: visible; }
+}
+
+/* ── Collapsible sidebar ── */
+.sidebar { overflow: hidden; transition: width 0.22s cubic-bezier(0.4,0,0.2,1); }
+.sidebar.collapsed { width: 62px; }
+
+.nav-text { overflow: hidden; white-space: nowrap; transition: opacity 0.1s ease; }
+.brand-text { overflow: hidden; white-space: nowrap; transition: opacity 0.1s ease; }
+.sidebar.collapsed .nav-text,
+.sidebar.collapsed .brand-text { opacity: 0; pointer-events: none; }
+.sidebar.collapsed .nav-section-label { opacity: 0; height: 0; padding: 0; overflow: hidden; }
+.sidebar.collapsed .nav-item { justify-content: center; padding: 9px; gap: 0; }
+.sidebar.collapsed .sidebar-brand { justify-content: center; padding: 18px 0; }
+.sidebar.collapsed .sidebar-footer .nav-item { justify-content: center; padding: 9px; gap: 0; }
+.sidebar.collapsed .sidebar-collapse-btn { justify-content: center; padding: 9px; gap: 0; }
+
+.sidebar-collapse-btn {
+  display: flex; align-items: center; gap: 10px;
+  width: 100%; padding: 9px 12px; border-radius: var(--r);
+  border: none; background: none; cursor: pointer;
+  color: rgba(255,255,255,0.38); font-family: inherit;
+  font-size: 12px; font-weight: 500; transition: all 0.15s;
+  margin-bottom: 3px;
+}
+.sidebar-collapse-btn:hover { background: rgba(255,255,255,0.07); color: rgba(255,255,255,0.65); }
+.sidebar-collapse-btn .material-symbols-outlined {
+  font-size: 20px; flex-shrink: 0;
+  transition: transform 0.22s cubic-bezier(0.4,0,0.2,1);
+}
+.sidebar.collapsed .sidebar-collapse-btn .material-symbols-outlined { transform: rotate(180deg); }
 </style>
 </head>
 <body>
+<div class="app">
 
-<div class="app-shell">
-
-  <div class="app-header">
-    <h1>Document Quality Assurance</h1>
+<!-- ═══ SIDEBAR ═══ -->
+<aside class="sidebar" id="sidebar">
+  <div class="sidebar-brand">
+    <div class="brand-icon">
+      <span class="material-symbols-outlined" style="font-variation-settings:'FILL' 1,'wght' 500,'opsz' 24">analytics</span>
+    </div>
+    <div class="brand-text">
+      <div class="brand-name">DocAudit QA</div>
+      <div class="brand-sub">Document Quality</div>
+    </div>
   </div>
 
-  <div class="tabs">
-    <button class="tab-btn active" data-tab="claim">Klaim Tunggal</button>
-    <button class="tab-btn" data-tab="document">Dokumen (teks)</button>
-    <button class="tab-btn" data-tab="pdf">Dokumen (PDF)</button>
-    <button class="tab-btn" data-tab="data">Lihat Data</button>
-  </div>
+  <nav class="sidebar-nav">
+    <div class="nav-section-label">Verifikasi</div>
+    <a class="nav-item active-nav" data-tab="claim" title="Klaim Tunggal">
+      <span class="material-symbols-outlined">fact_check</span>
+      <span class="nav-text">Klaim Tunggal</span>
+    </a>
+    <a class="nav-item inactive-nav" data-tab="document" title="Dokumen (Teks)">
+      <span class="material-symbols-outlined">description</span>
+      <span class="nav-text">Dokumen (Teks)</span>
+    </a>
+    <a class="nav-item inactive-nav" data-tab="pdf" title="Dokumen (PDF)">
+      <span class="material-symbols-outlined">picture_as_pdf</span>
+      <span class="nav-text">Dokumen (PDF)</span>
+    </a>
+    <a class="nav-item inactive-nav" data-tab="paired" title="Verifikasi Berpasangan">
+      <span class="material-symbols-outlined">compare_arrows</span>
+      <span class="nav-text">Verifikasi Berpasangan</span>
+    </a>
+    <div class="nav-section-label" style="margin-top:8px">Data</div>
+    <a class="nav-item inactive-nav" data-tab="data" title="Lihat Data">
+      <span class="material-symbols-outlined">table_chart</span>
+      <span class="nav-text">Lihat Data</span>
+    </a>
+  </nav>
 
-  <div class="panel active" id="panel-claim">
-    <textarea id="claim-input" placeholder="Contoh: Inflasi pada Q1 2024 sebesar 3.05%"></textarea>
-    <button class="submit" data-action="claim">Verifikasi</button>
-    <div class="result-box" id="claim-result"></div>
+  <div class="sidebar-footer">
+    <button class="sidebar-collapse-btn" id="sidebar-toggle" title="Tutup panel">
+      <span class="material-symbols-outlined">chevron_left</span>
+      <span class="nav-text">Tutup Panel</span>
+    </button>
   </div>
+</aside>
 
-  <div class="panel" id="panel-document">
-    <textarea id="document-input" placeholder="Tempel teks dokumen di sini..."></textarea>
-    <button class="submit" data-action="document">Verifikasi Dokumen</button>
-    <div class="result-box" id="document-result"></div>
-  </div>
+<!-- ═══ MAIN ═══ -->
+<div class="main">
+  <header class="topbar">
+    <span class="topbar-title" id="header-title">Klaim Tunggal</span>
+    <div class="topbar-divider"></div>
+    <span class="topbar-sub">Document Quality Assurance</span>
+  </header>
 
-  <div class="panel" id="panel-pdf">
-    <input type="file" id="pdf-input" accept="application/pdf">
-    <button class="submit" data-action="pdf">Verifikasi PDF</button>
-    <div class="result-box" id="pdf-result"></div>
-  </div>
+  <main class="content">
 
-  <div class="panel" id="panel-data">
-    <select class="table-select" id="table-select"></select>
-    <div class="result-box" id="data-result"></div>
-  </div>
+    <!-- Panel: Klaim Tunggal -->
+    <div class="panel active" id="panel-claim">
+      <div class="panel-wrap">
+        <div class="card">
+          <div class="card-header">
+            <label class="form-label">Klaim yang akan diverifikasi</label>
+            <textarea id="claim-input" rows="3" placeholder="Contoh: Inflasi pada Q1 2024 sebesar 3.05%"></textarea>
+          </div>
+          <div class="card-footer">
+            <button class="run-btn" data-action="claim">
+              <span class="material-symbols-outlined">search</span>
+              Verifikasi
+            </button>
+          </div>
+        </div>
+        <div id="claim-result"></div>
+      </div>
+    </div>
+
+    <!-- Panel: Dokumen Teks -->
+    <div class="panel" id="panel-document">
+      <div class="panel-wrap">
+        <div class="card">
+          <div class="card-header">
+            <label class="form-label">Teks Dokumen</label>
+            <textarea id="document-input" rows="8" placeholder="Tempel teks dokumen di sini..." style="min-height:160px"></textarea>
+          </div>
+          <div class="card-footer">
+            <button class="run-btn" data-action="document">
+              <span class="material-symbols-outlined">search</span>
+              Verifikasi Dokumen
+            </button>
+          </div>
+        </div>
+        <div id="document-result"></div>
+      </div>
+    </div>
+
+    <!-- Panel: Dokumen PDF -->
+    <div class="panel" id="panel-pdf">
+      <div class="panel-wrap">
+        <div class="card">
+          <div class="card-header">
+            <label class="form-label">Upload PDF</label>
+            <div class="dropzone" id="pdf-dropzone">
+              <div class="dz-icon">
+                <span class="material-symbols-outlined">upload_file</span>
+              </div>
+              <div class="dz-title">Pilih atau drop file PDF</div>
+              <div class="dz-sub">Format: .pdf</div>
+              <div class="dz-filename" id="pdf-filename">Belum ada file dipilih</div>
+              <input type="file" id="pdf-input" accept="application/pdf" style="display:none">
+            </div>
+          </div>
+          <div class="card-footer">
+            <button class="run-btn" data-action="pdf">
+              <span class="material-symbols-outlined">search</span>
+              Verifikasi PDF
+            </button>
+          </div>
+        </div>
+        <div id="pdf-result"></div>
+      </div>
+    </div>
+
+    <!-- Panel: Verifikasi Berpasangan -->
+    <div class="panel" id="panel-paired">
+      <div class="paired-container" id="paired-container">
+        <div class="paired-form-area">
+          <div class="card" style="margin-bottom:0">
+            <div class="card-header">
+              <div class="upload-row">
+                <div class="upload-field">
+                  <span class="upload-label">PDF Laporan</span>
+                  <div class="dropzone-sm" id="paired-pdf-dropzone">
+                    <span class="material-symbols-outlined">picture_as_pdf</span>
+                    <div class="dz-sub" id="paired-pdf-filename">Pilih file PDF</div>
+                    <input type="file" id="paired-pdf" accept="application/pdf" style="display:none">
+                  </div>
+                </div>
+                <div class="upload-field">
+                  <span class="upload-label">Tabel Excel (.xls / .xlsx)</span>
+                  <div id="excel-sources-container"></div>
+                  <button type="button" id="add-excel-btn" class="add-excel-btn">
+                    <span class="material-symbols-outlined">add</span> Tambah Tabel
+                  </button>
+                </div>
+              </div>
+            </div>
+            <div class="card-footer">
+              <button class="run-btn" data-action="paired">
+                <span class="material-symbols-outlined">search</span>
+                Verifikasi
+              </button>
+            </div>
+          </div>
+        </div>
+        <div class="paired-result-area" id="paired-result"></div>
+      </div>
+    </div>
+
+    <!-- Panel: Lihat Data -->
+    <div class="panel" id="panel-data">
+      <div class="panel-wrap-wide">
+        <div class="card" style="overflow:visible">
+          <div class="card-header">
+            <label class="form-label">Pilih Tabel</label>
+            <select id="table-select"></select>
+          </div>
+        </div>
+        <div id="data-result"></div>
+      </div>
+    </div>
+
+  </main>
 
 </div>
 
+</div><!-- .app -->
+
 <script>
   const STATUS_LABEL = { Entailed: "Benar", Refuted: "Salah", Inconclusive: "Tidak Cukup Data", Error: "Error" };
+  const PANEL_TITLES = { claim: "Klaim Tunggal", document: "Dokumen (Teks)", pdf: "Dokumen (PDF)", paired: "Verifikasi Berpasangan", data: "Lihat Data" };
 
-  document.querySelectorAll(".tab-btn").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      document.querySelectorAll(".tab-btn").forEach((b) => b.classList.remove("active"));
+  document.querySelectorAll(".nav-item[data-tab]").forEach((item) => {
+    item.addEventListener("click", () => {
+      const tab = item.dataset.tab;
+      document.querySelectorAll(".nav-item[data-tab]").forEach((n) => {
+        n.classList.remove("active-nav");
+        n.classList.add("inactive-nav");
+      });
+      item.classList.remove("inactive-nav");
+      item.classList.add("active-nav");
       document.querySelectorAll(".panel").forEach((p) => p.classList.remove("active"));
-      btn.classList.add("active");
-      document.getElementById(`panel-${btn.dataset.tab}`).classList.add("active");
-      if (btn.dataset.tab === "data" && !tableListLoaded) {
+      document.getElementById(`panel-${tab}`).classList.add("active");
+      document.getElementById("header-title").textContent = PANEL_TITLES[tab] || tab;
+      if (tab === "data" && !tableListLoaded) {
         tableListLoaded = true;
         loadTableList();
       }
@@ -305,7 +826,7 @@
       ? `<pre class="sql">${escapeHtml(result.sql_query_used)}</pre>`
       : "";
     return `
-      <div class="claim-card">
+      <div class="claim-card ${result.status}">
         <div class="claim-text">${escapeHtml(result.claim)}</div>
         <span class="badge ${result.status}">${badgeText}</span>
         <div class="reasoning">${escapeHtml(result.reasoning)}</div>
@@ -317,7 +838,7 @@
     const cards = data.results.map(renderClaimCard).join("");
     return `
       <div class="summary-line">${escapeHtml(data.summary)}</div>
-      ${cards || "<p>Tidak ada klaim yang ditemukan.</p>"}`;
+      ${cards || "<p class='muted-text'>Tidak ada klaim yang ditemukan.</p>"}`;
   }
 
   async function callApi(url, options, resultEl, renderFn) {
@@ -337,85 +858,163 @@
 
   function withDisabledButton(button, fn) {
     button.disabled = true;
-    const original = button.textContent;
-    button.textContent = "Memproses...";
+    const origHTML = button.innerHTML;
+    button.innerHTML = `<span class="loading" style="color:white;padding:0;margin:0"></span> Memproses...`;
     return fn().finally(() => {
       button.disabled = false;
-      button.textContent = original;
+      button.innerHTML = origHTML;
     });
   }
 
+  // Claim
   document.querySelector('[data-action="claim"]').addEventListener("click", (e) => {
     const claim = document.getElementById("claim-input").value.trim();
     const resultEl = document.getElementById("claim-result");
     if (!claim) return;
-    withDisabledButton(e.target, () =>
-      callApi(
-        "/api/verify-claim",
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ claim }),
-        },
-        resultEl,
-        (data) => renderClaimCard({ ...data, claim })
-      )
+    withDisabledButton(e.currentTarget, () =>
+      callApi("/api/verify-claim",
+        { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ claim }) },
+        resultEl, (data) => renderClaimCard({ ...data, claim }))
     );
   });
 
+  // Document
   document.querySelector('[data-action="document"]').addEventListener("click", (e) => {
     const document_ = document.getElementById("document-input").value.trim();
     const resultEl = document.getElementById("document-result");
     if (!document_) return;
-    withDisabledButton(e.target, () =>
-      callApi(
-        "/api/verify-document",
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ document: document_ }),
-        },
-        resultEl,
-        renderDocumentResponse
-      )
+    withDisabledButton(e.currentTarget, () =>
+      callApi("/api/verify-document",
+        { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ document: document_ }) },
+        resultEl, renderDocumentResponse)
     );
   });
 
+  // PDF dropzone
+  (function () {
+    const dz = document.getElementById("pdf-dropzone");
+    const inp = document.getElementById("pdf-input");
+    const fn  = document.getElementById("pdf-filename");
+    dz.addEventListener("click", () => inp.click());
+    inp.addEventListener("change", () => { fn.textContent = inp.files[0]?.name || "Belum ada file dipilih"; });
+    dz.addEventListener("dragover", (e) => { e.preventDefault(); dz.classList.add("drag-over"); });
+    dz.addEventListener("dragleave", () => dz.classList.remove("drag-over"));
+    dz.addEventListener("drop", (e) => {
+      e.preventDefault();
+      dz.classList.remove("drag-over");
+      const file = e.dataTransfer.files[0];
+      if (file) { const dt = new DataTransfer(); dt.items.add(file); inp.files = dt.files; fn.textContent = file.name; }
+    });
+  })();
+
   document.querySelector('[data-action="pdf"]').addEventListener("click", (e) => {
-    const fileInput = document.getElementById("pdf-input");
+    const inp = document.getElementById("pdf-input");
     const resultEl = document.getElementById("pdf-result");
-    if (!fileInput.files.length) return;
+    if (!inp.files.length) return;
     const formData = new FormData();
-    formData.append("file", fileInput.files[0]);
-    withDisabledButton(e.target, () =>
+    formData.append("file", inp.files[0]);
+    withDisabledButton(e.currentTarget, () =>
       callApi("/api/verify-document-pdf", { method: "POST", body: formData }, resultEl, renderDocumentResponse)
     );
   });
 
-  // --- "Lihat Data" tab: browse raw table contents, including rows ingested from Excel uploads ---
+  // Paired dropzones
+  function setupDropzone(dzId, inpId, fnId) {
+    const dz  = document.getElementById(dzId);
+    const inp = document.getElementById(inpId);
+    const fn  = document.getElementById(fnId);
+    dz.addEventListener("click", () => inp.click());
+    inp.addEventListener("change", () => { fn.textContent = inp.files[0]?.name || "Belum ada file dipilih"; });
+    dz.addEventListener("dragover", (e) => { e.preventDefault(); dz.classList.add("drag-over"); });
+    dz.addEventListener("dragleave", () => dz.classList.remove("drag-over"));
+    dz.addEventListener("drop", (e) => {
+      e.preventDefault();
+      dz.classList.remove("drag-over");
+      const file = e.dataTransfer.files[0];
+      if (file) { const dt = new DataTransfer(); dt.items.add(file); inp.files = dt.files; fn.textContent = file.name; }
+    });
+  }
+  setupDropzone("paired-pdf-dropzone", "paired-pdf", "paired-pdf-filename");
+
+  // ── Multi-Excel source management ──────────────────────────────────────────
+  const EXCEL_ACCEPT = ".xls,.xlsx,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+  let excelSources = []; // [{container, inp, sheetInp}]
+
+  function attachDropzoneBehavior(dz, inp, fn) {
+    dz.addEventListener("click", () => inp.click());
+    inp.addEventListener("change", () => { fn.textContent = inp.files[0]?.name || "Pilih file Excel"; });
+    dz.addEventListener("dragover", (e) => { e.preventDefault(); dz.classList.add("drag-over"); });
+    dz.addEventListener("dragleave", () => dz.classList.remove("drag-over"));
+    dz.addEventListener("drop", (e) => {
+      e.preventDefault();
+      dz.classList.remove("drag-over");
+      const file = e.dataTransfer.files[0];
+      if (file) { const dt = new DataTransfer(); dt.items.add(file); inp.files = dt.files; fn.textContent = file.name; }
+    });
+  }
+
+  function updateRemoveButtons() {
+    excelSources.forEach((src) => {
+      src.container.querySelector(".remove-excel-btn").style.visibility =
+        excelSources.length > 1 ? "visible" : "hidden";
+    });
+  }
+
+  function addExcelSource() {
+    const uid = Date.now() + excelSources.length;
+    const container = document.createElement("div");
+    container.className = "excel-source-entry";
+    container.innerHTML = `
+      <div class="source-entry-header">
+        <div class="dropzone-sm excel-dz" id="excel-dz-${uid}" style="min-height:56px;padding:10px 12px">
+          <span class="material-symbols-outlined">table_chart</span>
+          <div class="dz-sub" id="excel-fn-${uid}">Pilih file Excel</div>
+          <input type="file" id="excel-inp-${uid}" accept="${EXCEL_ACCEPT}" style="display:none">
+        </div>
+        <button type="button" class="remove-excel-btn" title="Hapus" style="visibility:hidden">
+          <span class="material-symbols-outlined">close</span>
+        </button>
+      </div>
+      <div class="source-sheet-row">
+        <label>Sheet:</label>
+        <input type="text" class="excel-sheet-inp" value="I.1" spellcheck="false">
+      </div>`;
+    const inp     = container.querySelector(`#excel-inp-${uid}`);
+    const fn      = container.querySelector(`#excel-fn-${uid}`);
+    const dz      = container.querySelector(`#excel-dz-${uid}`);
+    const sheetInp = container.querySelector(".excel-sheet-inp");
+    const removeBtn = container.querySelector(".remove-excel-btn");
+    attachDropzoneBehavior(dz, inp, fn);
+    removeBtn.addEventListener("click", () => {
+      if (excelSources.length <= 1) return;
+      excelSources = excelSources.filter(s => s.container !== container);
+      container.remove();
+      updateRemoveButtons();
+    });
+    excelSources.push({ container, inp, sheetInp });
+    document.getElementById("excel-sources-container").appendChild(container);
+    updateRemoveButtons();
+  }
+
+  addExcelSource(); // initialize with one source
+  document.getElementById("add-excel-btn").addEventListener("click", addExcelSource);
+
+  // Browse table
   let tableListLoaded = false;
   let currentTable = null;
   let currentOffset = 0;
   const TABLE_PAGE_SIZE = 100;
 
   async function loadTableList() {
-    const select = document.getElementById("table-select");
+    const select   = document.getElementById("table-select");
     const resultEl = document.getElementById("data-result");
     try {
-      const res = await fetch("/api/tables");
+      const res  = await fetch("/api/tables");
       const data = await res.json();
-      if (!res.ok) {
-        resultEl.innerHTML = `<div class="error-banner">${escapeHtml(data.detail || "Terjadi kesalahan.")}</div>`;
-        return;
-      }
+      if (!res.ok) { resultEl.innerHTML = `<div class="error-banner">${escapeHtml(data.detail || "Terjadi kesalahan.")}</div>`; return; }
       select.innerHTML = data.tables.map((t) => `<option value="${escapeHtml(t)}">${escapeHtml(t)}</option>`).join("");
-      if (data.tables.length) {
-        currentTable = data.tables[0];
-        currentOffset = 0;
-        loadTableData();
-      } else {
-        resultEl.innerHTML = "<p>Tidak ada tabel di database.</p>";
-      }
+      if (data.tables.length) { currentTable = data.tables[0]; currentOffset = 0; loadTableData(); }
+      else { resultEl.innerHTML = "<p class='muted-text'>Tidak ada tabel di database.</p>"; }
     } catch (err) {
       resultEl.innerHTML = `<div class="error-banner">Gagal menghubungi server: ${escapeHtml(err.message)}</div>`;
     }
@@ -423,22 +1022,21 @@
 
   function renderTableData(data) {
     const head = `<tr>${data.columns.map((c) => `<th>${escapeHtml(c)}</th>`).join("")}</tr>`;
-    const body = data.rows
-      .map(
-        (row) =>
-          `<tr>${row.map((cell) => `<td>${cell === null ? "" : escapeHtml(String(cell))}</td>`).join("")}</tr>`
-      )
-      .join("");
+    const body = data.rows.map((row) =>
+      `<tr>${row.map((cell) => `<td>${cell === null ? "" : escapeHtml(String(cell))}</td>`).join("")}</tr>`
+    ).join("");
     const from = data.total_rows === 0 ? 0 : data.offset + 1;
-    const to = Math.min(data.offset + data.limit, data.total_rows);
+    const to   = Math.min(data.offset + data.limit, data.total_rows);
     return `
-      <div class="table-meta">Menampilkan ${from}-${to} dari ${data.total_rows} baris</div>
-      <div class="table-scroll">
-        <table class="data-table"><thead>${head}</thead><tbody>${body}</tbody></table>
-      </div>
-      <div class="pager">
-        <button class="submit" id="data-prev" ${data.offset === 0 ? "disabled" : ""}>&laquo; Sebelumnya</button>
-        <button class="submit" id="data-next" ${to >= data.total_rows ? "disabled" : ""}>Berikutnya &raquo;</button>
+      <div class="data-card">
+        <div class="table-meta">Menampilkan ${from}&ndash;${to} dari ${data.total_rows} baris</div>
+        <div class="table-scroll">
+          <table class="data-table"><thead>${head}</thead><tbody>${body}</tbody></table>
+        </div>
+        <div class="table-pagination">
+          <button class="run-btn" id="data-prev" ${data.offset === 0 ? "disabled" : ""}>&laquo; Sebelumnya</button>
+          <button class="run-btn" id="data-next" ${to >= data.total_rows ? "disabled" : ""}>Berikutnya &raquo;</button>
+        </div>
       </div>`;
   }
 
@@ -446,34 +1044,179 @@
     const resultEl = document.getElementById("data-result");
     resultEl.innerHTML = `<div class="loading">Memuat...</div>`;
     try {
-      const res = await fetch(
-        `/api/tables/${encodeURIComponent(currentTable)}?limit=${TABLE_PAGE_SIZE}&offset=${currentOffset}`
-      );
+      const res  = await fetch(`/api/tables/${encodeURIComponent(currentTable)}?limit=${TABLE_PAGE_SIZE}&offset=${currentOffset}`);
       const data = await res.json();
-      if (!res.ok) {
-        resultEl.innerHTML = `<div class="error-banner">${escapeHtml(data.detail || "Terjadi kesalahan.")}</div>`;
-        return;
-      }
+      if (!res.ok) { resultEl.innerHTML = `<div class="error-banner">${escapeHtml(data.detail || "Terjadi kesalahan.")}</div>`; return; }
       resultEl.innerHTML = renderTableData(data);
-      document.getElementById("data-prev").addEventListener("click", () => {
-        currentOffset = Math.max(0, currentOffset - TABLE_PAGE_SIZE);
-        loadTableData();
-      });
-      document.getElementById("data-next").addEventListener("click", () => {
-        currentOffset += TABLE_PAGE_SIZE;
-        loadTableData();
-      });
+      document.getElementById("data-prev").addEventListener("click", () => { currentOffset = Math.max(0, currentOffset - TABLE_PAGE_SIZE); loadTableData(); });
+      document.getElementById("data-next").addEventListener("click", () => { currentOffset += TABLE_PAGE_SIZE; loadTableData(); });
     } catch (err) {
       resultEl.innerHTML = `<div class="error-banner">Gagal menghubungi server: ${escapeHtml(err.message)}</div>`;
     }
   }
 
-  document.getElementById("table-select").addEventListener("change", (e) => {
-    currentTable = e.target.value;
-    currentOffset = 0;
-    loadTableData();
+  document.getElementById("table-select").addEventListener("change", (e) => { currentTable = e.target.value; currentOffset = 0; loadTableData(); });
+
+  // Paired verifier
+  const VERDICT_LABEL = { Entailed: "Sesuai", Refuted: "Tidak Sesuai", Inconclusive: "Tidak Cukup Data" };
+  const TYPE_LABEL    = { absolute: "Level", growth_yoy: "% YoY" };
+
+  function fmtValue(val, unit) {
+    if (val === null || val === undefined) return '<span class="na">—</span>';
+    const num = typeof val === "number"
+      ? val.toLocaleString("id-ID", { minimumFractionDigits: 1, maximumFractionDigits: 4 })
+      : val;
+    return unit === "persen_yoy" ? `${num}%` : `${num} <span class="na">${escapeHtml(unit || "")}</span>`;
+  }
+
+  function fmtDelta(delta, verdict) {
+    if (delta === null || delta === undefined) return '<span class="na">—</span>';
+    const cls = verdict === "Entailed" ? "delta-ok" : "delta-bad";
+    const num = Number(delta).toLocaleString("id-ID", { minimumFractionDigits: 2, maximumFractionDigits: 4 });
+    return `<span class="${cls}">${num}</span>`;
+  }
+
+  function renderDonutSVG(e, r, i) {
+    const total = e + r + i;
+    const S = 128, cx = 64, cy = 64, radius = 46, sw = 20;
+    const circ = 2 * Math.PI * radius;
+    if (total === 0) {
+      return `<svg width="${S}" height="${S}" viewBox="0 0 ${S} ${S}"><circle cx="${cx}" cy="${cy}" r="${radius}" fill="none" stroke="#DDE5F5" stroke-width="${sw}"/><text x="${cx}" y="${cy}" text-anchor="middle" dominant-baseline="middle" font-family="Inter,sans-serif" font-size="13" fill="#7589A8">0</text></svg>`;
+    }
+    const slices = [
+      { value: r, color: '#EF4444' },
+      { value: e, color: '#22C55E' },
+      { value: i, color: '#F59E0B' },
+    ].filter(s => s.value > 0);
+    let svgCircles = '';
+    let cumulative = 0;
+    if (slices.length === 1) {
+      svgCircles = `<circle cx="${cx}" cy="${cy}" r="${radius}" fill="none" stroke="${slices[0].color}" stroke-width="${sw}"/>`;
+    } else {
+      slices.forEach(({ value, color }) => {
+        const dash = (value / total) * circ;
+        svgCircles += `<circle cx="${cx}" cy="${cy}" r="${radius}" fill="none" stroke="${color}" stroke-width="${sw}" stroke-dasharray="${dash.toFixed(2)} ${(circ - dash).toFixed(2)}" stroke-dashoffset="${(-cumulative).toFixed(2)}" transform="rotate(-90 ${cx} ${cy})"/>`;
+        cumulative += dash;
+      });
+    }
+    svgCircles += `<text x="${cx}" y="${cy - 5}" text-anchor="middle" font-family="Inter,sans-serif" font-size="22" font-weight="800" fill="#0B1F3A">${total}</text>`;
+    svgCircles += `<text x="${cx}" y="${cy + 13}" text-anchor="middle" font-family="Inter,sans-serif" font-size="9" fill="#7589A8">FAKTA</text>`;
+    return `<svg width="${S}" height="${S}" viewBox="0 0 ${S} ${S}">${svgCircles}</svg>`;
+  }
+
+  function renderPairedResponse(data) {
+    const e = data.entailed_count, r = data.refuted_count, i = data.inconclusive_count;
+    const total = data.total_facts;
+    // Support both old single-value fields and new list fields
+    const units = data.excel_units || (data.excel_unit ? [data.excel_unit] : []);
+    const uniqueUnits = [...new Set(units)].filter(Boolean);
+    const unitStr = uniqueUnits.length ? ` &middot; Unit: <strong>${uniqueUnits.map(escapeHtml).join(", ")}</strong>` : '';
+
+    const header = `<div class="report-top">
+      <div class="donut-wrap">${renderDonutSVG(e, r, i)}</div>
+      <div class="report-stats">
+        <div class="stat-row">
+          <div class="stat-card refuted"><div class="stat-num">${r}</div><div class="stat-label">Tidak Sesuai</div></div>
+          <div class="stat-card entailed"><div class="stat-num">${e}</div><div class="stat-label">Sesuai</div></div>
+        </div>
+        <div class="stat-row">
+          <div class="stat-card inconclusive"><div class="stat-num">${i}</div><div class="stat-label">Tidak Cukup Data</div></div>
+          <div class="stat-card total"><div class="stat-num">${total}</div><div class="stat-label">Total Fakta${unitStr}</div></div>
+        </div>
+      </div>
+    </div>`;
+
+    const defaultFilter = r > 0 ? "Refuted" : "all";
+    const filterBar = `<div class="filter-bar">
+      <button class="filter-btn${defaultFilter === 'all' ? ' active' : ''}" data-filter="all">Semua (${total})</button>
+      <button class="filter-btn${defaultFilter === 'Refuted' ? ' active' : ''}" data-filter="Refuted">Tidak Sesuai (${r})</button>
+      <button class="filter-btn" data-filter="Entailed">Sesuai (${e})</button>
+      <button class="filter-btn" data-filter="Inconclusive">Tidak Cukup Data (${i})</button>
+    </div>`;
+
+    const cards = !data.results.length
+      ? "<p class='muted-text'>Tidak ada fakta yang dapat diverifikasi.</p>"
+      : data.results.map((item) => {
+          const verdict  = item.verdict;
+          const badgeCls = verdict === "Entailed" ? "Entailed" : verdict === "Refuted" ? "Refuted" : "Inconclusive";
+          const period   = [item.month, item.year].filter(Boolean).join(" ");
+          const pdfVal   = fmtValue(item.pdf_value, item.pdf_unit === "persen_yoy" ? "persen_yoy" : item.pdf_unit);
+          const xlVal    = item.excel_value !== null && item.excel_value !== undefined
+            ? fmtValue(item.excel_value, item.excel_unit === "persen_yoy" ? "persen_yoy" : item.excel_unit)
+            : null;
+          const pdfCls   = verdict === "Refuted" ? "bad" : verdict === "Entailed" ? "ok" : "";
+          const pageBadge = item.page_number != null ? `<span class="page-badge">Hal.&nbsp;${item.page_number}</span>` : "";
+          const sourceBadge = item.matched_excel_source ? `<span class="source-badge" title="${escapeHtml(item.matched_excel_source)}">${escapeHtml(item.matched_excel_source)}</span>` : "";
+          const quote    = item.context_quote ? `<div class="fact-quote">"${escapeHtml(item.context_quote)}"</div>` : "";
+          let comparison = `<span class="fact-val-label">PDF:</span> <span class="fact-val ${pdfCls}">${pdfVal}</span>`;
+          if (xlVal) {
+            comparison += ` <span class="fact-arrow">&#8594;</span> <span class="fact-val-label">Referensi:</span> <span class="fact-val">${xlVal}</span>`;
+          } else if (verdict === "Inconclusive") {
+            comparison += ` <span class="fact-arrow">&#8594;</span> <span class="na">Tidak ditemukan di data</span>`;
+          }
+          const hidden = defaultFilter !== "all" && verdict !== defaultFilter ? " hidden-fact" : "";
+          return `<div class="fact-card ${verdict}${hidden}" data-verdict="${escapeHtml(verdict)}">
+            <div class="fact-card-top">
+              <span class="badge ${badgeCls}">${escapeHtml(VERDICT_LABEL[verdict] || verdict)}</span>
+              <span class="fact-metric">${escapeHtml(item.metric_label)}</span>
+              ${period ? `<span class="fact-period">${escapeHtml(period)}</span>` : ""}
+              ${pageBadge}
+              ${sourceBadge}
+            </div>
+            ${quote}
+            <div class="fact-comparison">${comparison}</div>
+          </div>`;
+        }).join("");
+
+    return `<div class="paired-report">${header}${filterBar}<div class="fact-cards">${cards}</div></div>`;
+  }
+
+  function attachPairedHandlers(resultEl) {
+    resultEl.querySelectorAll(".filter-btn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        resultEl.querySelectorAll(".filter-btn").forEach((b) => b.classList.remove("active"));
+        btn.classList.add("active");
+        const filter = btn.dataset.filter;
+        resultEl.querySelectorAll(".fact-card").forEach((card) => {
+          card.classList.toggle("hidden-fact", filter !== "all" && card.dataset.verdict !== filter);
+        });
+      });
+    });
+  }
+
+  document.querySelector('[data-action="paired"]').addEventListener("click", (e) => {
+    const pdfInp   = document.getElementById("paired-pdf");
+    const resultEl = document.getElementById("paired-result");
+    const filledSources = excelSources.filter(s => s.inp.files.length > 0);
+    if (!pdfInp.files.length || filledSources.length === 0) {
+      resultEl.innerHTML = `<div class="error-banner">Pilih file PDF dan minimal satu file Excel terlebih dahulu.</div>`;
+      return;
+    }
+    const formData = new FormData();
+    formData.append("pdf_file", pdfInp.files[0]);
+    const sheetNames = filledSources.map(s => s.sheetInp.value.trim() || "I.1").join(",");
+    filledSources.forEach(s => formData.append("excel_file", s.inp.files[0]));
+    withDisabledButton(e.currentTarget, () =>
+      callApi(`/api/verify-paired?sheet_names=${encodeURIComponent(sheetNames)}`,
+        { method: "POST", body: formData },
+        resultEl,
+        (data) => {
+          const html = renderPairedResponse(data);
+          setTimeout(() => {
+            document.getElementById("paired-container").classList.add("has-results");
+            document.getElementById("panel-paired").classList.add("has-results");
+            attachPairedHandlers(resultEl);
+          }, 0);
+          return html;
+        })
+
+    );
+  });
+
+  // Sidebar toggle
+  document.getElementById("sidebar-toggle").addEventListener("click", () => {
+    document.getElementById("sidebar").classList.toggle("collapsed");
   });
 </script>
-
 </body>
 </html>

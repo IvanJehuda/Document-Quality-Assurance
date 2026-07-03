@@ -1,7 +1,5 @@
 from unittest.mock import Mock, patch
 
-import pytest
-
 from pdf_extraction import extract_text_from_pdf
 
 
@@ -17,12 +15,12 @@ def _reader_with_pages(texts):
 
 
 @patch("pdf_extraction.PdfReader")
-def test_extract_text_from_pdf_joins_pages_with_blank_line(mock_pdf_reader):
+def test_extract_text_from_pdf_prefixes_each_page_with_a_marker(mock_pdf_reader):
     mock_pdf_reader.return_value = _reader_with_pages(["Page one text.", "Page two text."])
 
     result = extract_text_from_pdf(b"fake-pdf-bytes")
 
-    assert result == "Page one text.\n\nPage two text."
+    assert result == "[== Halaman 1 ==]\nPage one text.\n\n[== Halaman 2 ==]\nPage two text."
 
 
 @patch("pdf_extraction.PdfReader")
@@ -31,20 +29,20 @@ def test_extract_text_from_pdf_skips_blank_pages(mock_pdf_reader):
 
     result = extract_text_from_pdf(b"fake-pdf-bytes")
 
-    assert result == "Real content."
+    assert result == "[== Halaman 1 ==]\nReal content."
 
 
 @patch("pdf_extraction.PdfReader")
-def test_extract_text_from_pdf_raises_when_no_text_found(mock_pdf_reader):
+def test_extract_text_from_pdf_returns_empty_string_when_no_text_found(mock_pdf_reader):
+    # No raise here — paired_verifier.py relies on this returning a short/empty string so it
+    # can trigger the vision-OCR fallback rather than catching an exception.
     mock_pdf_reader.return_value = _reader_with_pages(["", "   ", None])
 
-    with pytest.raises(ValueError, match="No extractable text found"):
-        extract_text_from_pdf(b"fake-pdf-bytes")
+    assert extract_text_from_pdf(b"fake-pdf-bytes") == ""
 
 
 @patch("pdf_extraction.PdfReader")
-def test_extract_text_from_pdf_raises_when_no_pages_at_all(mock_pdf_reader):
+def test_extract_text_from_pdf_returns_empty_string_when_no_pages_at_all(mock_pdf_reader):
     mock_pdf_reader.return_value = _reader_with_pages([])
 
-    with pytest.raises(ValueError, match="No extractable text found"):
-        extract_text_from_pdf(b"fake-pdf-bytes")
+    assert extract_text_from_pdf(b"fake-pdf-bytes") == ""

@@ -6,3 +6,12 @@ venv/
 statistik_makro.db
 .pytest_cache/
 ~$*.xlsx
+
+# Real-world report fixtures used for manual testing of the paired pipeline
+# (contain actual report data, not synthetic samples like the .xlsx above)
+sample_data/M2-April-2026.pdf
+sample_data/M2-Maret-2026.pdf
+sample_data/superdjun.pdf
+sample_data/TABEL1_1.xls
+sample_data/TABEL1_19.xls
+sample_data/TABEL5_9 (1).xls
