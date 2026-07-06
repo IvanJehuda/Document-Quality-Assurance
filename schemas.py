@@ -50,22 +50,50 @@ class UploadExcelSourceResponse(BaseModel):
     defaulted: int
 
 
-class FactVerificationResult(BaseModel):
+class PeriodResult(BaseModel):
+    """One (metric, year, month) data point used to compute a FactVerificationResult."""
     metric_label: str
-    matched_excel_label: Optional[str] = None
-    matched_excel_source: Optional[str] = None  # "filename / sheet" of the source that matched
     year: int
     month: str
-    claim_type: Literal["absolute", "growth_yoy"]
-    pdf_value: float
-    pdf_unit: str
     excel_value: Optional[float] = None
-    excel_unit: str
+
+
+class FactVerificationResult(BaseModel):
+    operation: Literal[
+        "value", "yoy_growth", "average", "sum", "diff", "ratio",
+        "is_increasing", "is_decreasing", "is_stable",
+    ]
+    metric_label: str  # display label - shared metric name, or "A / B" for cross-metric ops
+    matched_excel_source: Optional[str] = None  # "filename / sheet" of the source that matched
+    periods: List[PeriodResult] = Field(default_factory=list)
+    claimed_value: Optional[float] = None
+    claimed_unit: Optional[str] = None
+    computed_value: Optional[float] = None
+    computed_unit: Optional[str] = None
     delta: Optional[float] = None
     verdict: Literal["Entailed", "Refuted", "Inconclusive"]
     reasoning: str
     context_quote: str
     page_number: Optional[int] = None
+
+
+class TypoIssue(BaseModel):
+    word: str
+    start: int
+    end: int
+    category: Literal["ejaan", "tidak_baku", "grammar"]
+    suggestion: str
+    explanation: str
+    page_number: Optional[int] = None
+
+
+class TypoCheckResponse(BaseModel):
+    total_issues: int
+    ejaan_count: int
+    tidak_baku_count: int
+    grammar_count: int
+    summary: str
+    issues: List[TypoIssue]
 
 
 class PairedVerificationResponse(BaseModel):
@@ -78,6 +106,7 @@ class PairedVerificationResponse(BaseModel):
     refuted_count: int
     inconclusive_count: int
     results: List[FactVerificationResult]
+    typo_check: Optional[TypoCheckResponse] = None
 
 
 class TableListResponse(BaseModel):

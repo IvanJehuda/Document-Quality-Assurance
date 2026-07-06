@@ -54,6 +54,7 @@ Pipeline:
                        and issues a structured Entailed/Refuted verdict.
 """
 
+import asyncio
 import logging
 import re
 from pathlib import Path
@@ -68,7 +69,12 @@ from excel_ingestion import ingest_bytes
 from llm_provider import get_llm, get_vision_llm
 from orchestrator import verify_document
 from paired_verifier import verify_paired
-from pdf_extraction import MIN_USEFUL_CHARS, extract_text_from_pdf, extract_text_from_pdf_vision_async
+from pdf_extraction import (
+    MIN_USEFUL_CHARS,
+    extract_narrative_text,
+    extract_text_from_pdf,
+    extract_text_from_pdf_vision_async,
+)
 from schemas import (
     ClaimRequest,
     DocumentRequest,
@@ -80,6 +86,7 @@ from schemas import (
     VerifyClaimResponse,
     VerifyDocumentResponse,
 )
+from typo_checker import check_typos
 from verifier import build_judge_chain, build_sql_chain, verify_claim
 
 logging.basicConfig(level=logging.INFO)
@@ -275,13 +282,25 @@ async def verify_paired_endpoint(
         except RuntimeError:
             logger.warning("Vision LLM not available (GOOGLE_API_KEY missing); vision fallback disabled.")
 
-        return await verify_paired(
-            pdf_bytes=pdf_bytes,
+        # Extract the narrative text once and share it between fact-verification and the
+        # typo/grammar check — the vision fallback is an LLM call, so re-extracting per
+        # consumer would double its cost and rate-limit exposure for no benefit.
+        narrative_text = await extract_narrative_text(pdf_bytes, vision_llm)
+
+        fact_result = await verify_paired(
+            narrative_text=narrative_text,
             excel_sources=excel_sources,
             llm=get_llm(temperature=0.0),
             pdf_filename=pdf_file.filename or "report.pdf",
             vision_llm=vision_llm,
         )
+        # Prefer Gemini for the typo/grammar escalation call when available - it judges
+        # domain jargon (e.g. "kartal", "inflasi") more reliably than the Groq text model,
+        # which was observed hallucinating a false-positive correction for "kartal" during
+        # real-document testing.
+        typo_llm = vision_llm if vision_llm is not None else get_llm(temperature=0.0)
+        typo_result = await asyncio.to_thread(check_typos, narrative_text, typo_llm)
+        return fact_result.model_copy(update={"typo_check": typo_result})
     except Exception as exc:
         logger.exception("Paired verification failed")
         raise HTTPException(status_code=400, detail=str(exc)) from exc

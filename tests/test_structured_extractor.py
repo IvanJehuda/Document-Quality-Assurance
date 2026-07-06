@@ -6,7 +6,10 @@ import pytest
 from langchain_core.runnables import RunnableLambda
 
 from structured_extractor import (
+    ExtractedFact,
+    PeriodPoint,
     _filter_narrative,
+    _finalize_facts,
     _find_page_number,
     _parse_indonesian_number,
     _split_into_page_chunks,
@@ -21,14 +24,18 @@ NARRATIVE = (
 ROW_LABELS = ["Uang Beredar (M2)"]
 
 
+def _fake_period(**overrides):
+    base = dict(metric_label="Uang Beredar (M2)", year=2026, month="Apr")
+    base.update(overrides)
+    return SimpleNamespace(**base)
+
+
 def _fake_fact(**overrides):
     base = dict(
-        metric_label="Uang Beredar (M2)",
-        year=2026,
-        month="Apr",
-        value_raw="10.355,1",
+        operation="value",
+        periods=[_fake_period()],
+        claimed_value_raw="10.355,1",
         unit="triliun Rp",
-        claim_type="absolute",
         context_quote="Uang beredar M2 pada April 2026 tercatat sebesar Rp10.355,1 triliun.",
     )
     base.update(overrides)
@@ -162,6 +169,141 @@ def test_split_into_page_chunks_splits_when_exceeding_max_chars():
 
 
 # ---------------------------------------------------------------------------
+# ExtractedFact.display_label
+# ---------------------------------------------------------------------------
+
+def test_display_label_returns_single_label_when_all_periods_share_metric():
+    fact = ExtractedFact(
+        operation="average",
+        periods=[
+            PeriodPoint(metric_label="Penyaluran Kredit", year=2026, month="Jan"),
+            PeriodPoint(metric_label="Penyaluran Kredit", year=2026, month="Feb"),
+        ],
+        claimed_value=100.0, unit="triliun Rp", context_quote="q",
+    )
+    assert fact.display_label == "Penyaluran Kredit"
+
+
+def test_display_label_joins_distinct_labels_for_cross_metric_operation():
+    fact = ExtractedFact(
+        operation="ratio",
+        periods=[
+            PeriodPoint(metric_label="Kredit", year=2026, month="Apr"),
+            PeriodPoint(metric_label="DPK", year=2026, month="Apr"),
+        ],
+        claimed_value=85.0, unit="persen", context_quote="q",
+    )
+    assert fact.display_label == "Kredit / DPK"
+
+
+# ---------------------------------------------------------------------------
+# _finalize_facts
+# ---------------------------------------------------------------------------
+
+def test_finalize_facts_parses_value_operation():
+    facts = _finalize_facts([_fake_fact()], NARRATIVE)
+
+    assert len(facts) == 1
+    assert facts[0].operation == "value"
+    assert facts[0].claimed_value == pytest.approx(10355.1)
+    assert facts[0].periods[0].month == "Apr"
+    assert facts[0].page_number == 1
+
+
+def test_finalize_facts_skips_unparseable_claimed_value():
+    facts = _finalize_facts([_fake_fact(claimed_value_raw="not-a-number")], NARRATIVE)
+    assert facts == []
+
+
+def test_finalize_facts_skips_missing_claimed_value_for_value_operation():
+    facts = _finalize_facts([_fake_fact(claimed_value_raw=None)], NARRATIVE)
+    assert facts == []
+
+
+def test_finalize_facts_skips_unrecognized_month():
+    facts = _finalize_facts([_fake_fact(periods=[_fake_period(month="Xyz")])], NARRATIVE)
+    assert facts == []
+
+
+def test_finalize_facts_normalizes_full_indonesian_month_name():
+    facts = _finalize_facts([_fake_fact(periods=[_fake_period(month="April")])], NARRATIVE)
+    assert facts[0].periods[0].month == "Apr"
+
+
+def test_finalize_facts_average_keeps_every_period_and_claimed_value():
+    raw = _fake_fact(
+        operation="average",
+        periods=[
+            _fake_period(month="Jan"), _fake_period(month="Feb"),
+            _fake_period(month="Mar"), _fake_period(month="Apr"),
+        ],
+        claimed_value_raw="105,5",
+    )
+    facts = _finalize_facts([raw], NARRATIVE)
+
+    assert len(facts) == 1
+    assert facts[0].operation == "average"
+    assert len(facts[0].periods) == 4
+    assert facts[0].claimed_value == pytest.approx(105.5)
+
+
+def test_finalize_facts_sum_keeps_every_period():
+    raw = _fake_fact(
+        operation="sum",
+        periods=[_fake_period(month="Jan"), _fake_period(month="Feb")],
+        claimed_value_raw="200",
+    )
+    facts = _finalize_facts([raw], NARRATIVE)
+
+    assert facts[0].operation == "sum"
+    assert len(facts[0].periods) == 2
+
+
+def test_finalize_facts_diff_keeps_two_chronological_periods():
+    raw = _fake_fact(
+        operation="diff",
+        periods=[_fake_period(month="Jan"), _fake_period(month="Apr")],
+        claimed_value_raw="50",
+    )
+    facts = _finalize_facts([raw], NARRATIVE)
+
+    assert facts[0].operation == "diff"
+    assert [p.month for p in facts[0].periods] == ["Jan", "Apr"]
+
+
+def test_finalize_facts_ratio_keeps_two_periods_with_distinct_metrics():
+    raw = _fake_fact(
+        operation="ratio",
+        periods=[
+            _fake_period(metric_label="Kredit", month="Apr"),
+            _fake_period(metric_label="DPK", month="Apr"),
+        ],
+        claimed_value_raw="85",
+        unit="persen",
+    )
+    facts = _finalize_facts([raw], NARRATIVE)
+
+    assert facts[0].operation == "ratio"
+    assert [p.metric_label for p in facts[0].periods] == ["Kredit", "DPK"]
+
+
+@pytest.mark.parametrize("operation", ["is_increasing", "is_decreasing", "is_stable"])
+def test_finalize_facts_trend_operations_allow_null_claimed_value(operation):
+    raw = _fake_fact(
+        operation=operation,
+        periods=[_fake_period(month="Jan"), _fake_period(month="Feb"), _fake_period(month="Mar")],
+        claimed_value_raw=None,
+        unit=None,
+    )
+    facts = _finalize_facts([raw], NARRATIVE)
+
+    assert len(facts) == 1
+    assert facts[0].operation == operation
+    assert facts[0].claimed_value is None
+    assert len(facts[0].periods) == 3
+
+
+# ---------------------------------------------------------------------------
 # extract_structured_facts / extract_structured_facts_async
 # ---------------------------------------------------------------------------
 
@@ -171,29 +313,29 @@ def test_extract_structured_facts_parses_value_and_resolves_page_number():
     facts = extract_structured_facts(NARRATIVE, ROW_LABELS, llm)
 
     assert len(facts) == 1
-    assert facts[0].value == pytest.approx(10355.1)
-    assert facts[0].month == "Apr"
+    assert facts[0].claimed_value == pytest.approx(10355.1)
+    assert facts[0].periods[0].month == "Apr"
     assert facts[0].page_number == 1
 
 
 def test_extract_structured_facts_skips_unparseable_value():
-    llm = _llm_with_facts([_fake_fact(value_raw="not-a-number")])
+    llm = _llm_with_facts([_fake_fact(claimed_value_raw="not-a-number")])
 
     assert extract_structured_facts(NARRATIVE, ROW_LABELS, llm) == []
 
 
 def test_extract_structured_facts_skips_unrecognized_month():
-    llm = _llm_with_facts([_fake_fact(month="Xyz")])
+    llm = _llm_with_facts([_fake_fact(periods=[_fake_period(month="Xyz")])])
 
     assert extract_structured_facts(NARRATIVE, ROW_LABELS, llm) == []
 
 
 def test_extract_structured_facts_normalizes_full_indonesian_month_name():
-    llm = _llm_with_facts([_fake_fact(month="April")])
+    llm = _llm_with_facts([_fake_fact(periods=[_fake_period(month="April")])])
 
     facts = extract_structured_facts(NARRATIVE, ROW_LABELS, llm)
 
-    assert facts[0].month == "Apr"
+    assert facts[0].periods[0].month == "Apr"
 
 
 def test_extract_structured_facts_falls_back_to_secondary_llm_on_primary_failure():
@@ -217,5 +359,5 @@ def test_extract_structured_facts_async_produces_same_result_as_sync():
     facts = asyncio.run(extract_structured_facts_async(NARRATIVE, ROW_LABELS, llm))
 
     assert len(facts) == 1
-    assert facts[0].value == pytest.approx(10355.1)
+    assert facts[0].claimed_value == pytest.approx(10355.1)
     assert facts[0].page_number == 1

@@ -6,13 +6,12 @@ import pytest
 from excel_parser_bi import BITableData
 from paired_verifier import (
     _ExcelSource,
-    _compare_absolute,
-    _compare_growth_yoy,
     _deduplicate_facts,
+    _evaluate_fact,
     _unit_factor,
     verify_paired,
 )
-from structured_extractor import ExtractedFact
+from structured_extractor import ExtractedFact, PeriodPoint
 
 
 def _make_table(title="Uang Beredar (M2)", unit="triliun Rp", data=None):
@@ -29,14 +28,19 @@ def _make_source(table, filename="TABEL1_1.xls", sheet="I.1"):
     return _ExcelSource(table=table, filename=filename, sheet=sheet)
 
 
+def _make_period(**overrides):
+    base = dict(metric_label="Total", year=2026, month="Apr")
+    base.update(overrides)
+    return PeriodPoint(**base)
+
+
 def _make_fact(**overrides):
+    periods = overrides.pop("periods", None) or [_make_period()]
     base = dict(
-        metric_label="Total",
-        year=2026,
-        month="Apr",
-        value=10355.1,
+        operation="value",
+        periods=periods,
+        claimed_value=10355.1,
         unit="triliun Rp",
-        claim_type="absolute",
         context_quote="quote",
         page_number=1,
     )
@@ -57,66 +61,66 @@ def test_unit_factor_is_case_and_whitespace_insensitive():
 
 
 # ---------------------------------------------------------------------------
-# _compare_absolute
+# _evaluate_fact — operation="value"
 # ---------------------------------------------------------------------------
 
-def test_compare_absolute_entailed_within_tolerance():
+def test_evaluate_value_entailed_within_tolerance():
     table = _make_table(data={("Total", 2026, "Apr"): 10355.1})
     fact = _make_fact()
 
-    result = _compare_absolute(fact, [_make_source(table)])
+    result = _evaluate_fact(fact, [_make_source(table)])
 
     assert result.verdict == "Entailed"
-    assert result.matched_excel_label == "Total"
+    assert result.periods[0].metric_label == "Total"
     assert result.delta == 0.0
 
 
-def test_compare_absolute_refuted_outside_tolerance():
+def test_evaluate_value_refuted_outside_tolerance():
     table = _make_table(data={("Total", 2026, "Apr"): 10000.0})
-    fact = _make_fact(value=10355.1)
+    fact = _make_fact(claimed_value=10355.1)
 
-    result = _compare_absolute(fact, [_make_source(table)])
+    result = _evaluate_fact(fact, [_make_source(table)])
 
     assert result.verdict == "Refuted"
     assert result.delta == pytest.approx(355.1)
 
 
-def test_compare_absolute_converts_units_between_pdf_and_excel():
+def test_evaluate_value_converts_units_between_pdf_and_excel():
     table = _make_table(unit="miliar Rp", data={("Total", 2026, "Apr"): 10355100.0})
-    fact = _make_fact(unit="triliun Rp", value=10355.1)
+    fact = _make_fact(unit="triliun Rp", claimed_value=10355.1)
 
-    result = _compare_absolute(fact, [_make_source(table)])
+    result = _evaluate_fact(fact, [_make_source(table)])
 
     assert result.verdict == "Entailed"
-    assert result.excel_value == pytest.approx(10355.1)
+    assert result.computed_value == pytest.approx(10355.1)
 
 
-def test_compare_absolute_inconclusive_when_metric_not_found():
+def test_evaluate_value_inconclusive_when_metric_not_found():
     table = _make_table(data={("Other", 2026, "Apr"): 1.0})
-    fact = _make_fact(metric_label="Nonexistent Metric")
+    fact = _make_fact(periods=[_make_period(metric_label="Nonexistent Metric")])
 
-    result = _compare_absolute(fact, [_make_source(table)])
+    result = _evaluate_fact(fact, [_make_source(table)])
 
     assert result.verdict == "Inconclusive"
-    assert "No data found" in result.reasoning
+    assert "Nonexistent Metric" in result.reasoning
 
 
-def test_compare_absolute_inconclusive_when_units_incompatible():
+def test_evaluate_value_inconclusive_when_units_incompatible():
     table = _make_table(unit="juta USD", data={("Total", 2026, "Apr"): 100.0})
     fact = _make_fact(unit="triliun Rp")
 
-    result = _compare_absolute(fact, [_make_source(table)])
+    result = _evaluate_fact(fact, [_make_source(table)])
 
     assert result.verdict == "Inconclusive"
     assert "not supported" in result.reasoning
 
 
-def test_compare_absolute_uses_first_matching_source_in_order():
+def test_evaluate_value_uses_first_matching_source_in_order():
     table_without_match = _make_table(data={})
     table_with_match = _make_table(data={("Total", 2026, "Apr"): 10355.1})
     fact = _make_fact()
 
-    result = _compare_absolute(
+    result = _evaluate_fact(
         fact,
         [_make_source(table_without_match, filename="a.xls"), _make_source(table_with_match, filename="b.xls")],
     )
@@ -126,47 +130,201 @@ def test_compare_absolute_uses_first_matching_source_in_order():
 
 
 # ---------------------------------------------------------------------------
-# _compare_growth_yoy
+# _evaluate_fact — operation="yoy_growth"
 # ---------------------------------------------------------------------------
 
-def test_compare_growth_yoy_entailed():
+def test_evaluate_yoy_growth_entailed():
     table = _make_table(data={("Total", 2026, "Apr"): 110.0, ("Total", 2025, "Apr"): 100.0})
-    fact = _make_fact(claim_type="growth_yoy", value=10.0, unit="persen_yoy")
+    fact = _make_fact(operation="yoy_growth", claimed_value=10.0, unit="persen_yoy")
 
-    result = _compare_growth_yoy(fact, [_make_source(table)])
+    result = _evaluate_fact(fact, [_make_source(table)])
 
     assert result.verdict == "Entailed"
-    assert result.excel_value == pytest.approx(10.0)
+    assert result.computed_value == pytest.approx(10.0)
+    assert len(result.periods) == 2
 
 
-def test_compare_growth_yoy_inconclusive_when_prior_year_missing():
+def test_evaluate_yoy_growth_inconclusive_when_prior_year_missing():
     table = _make_table(data={("Total", 2026, "Apr"): 110.0})
-    fact = _make_fact(claim_type="growth_yoy", value=10.0)
+    fact = _make_fact(operation="yoy_growth", claimed_value=10.0)
 
-    result = _compare_growth_yoy(fact, [_make_source(table)])
+    result = _evaluate_fact(fact, [_make_source(table)])
 
     assert result.verdict == "Inconclusive"
     assert "yoy denominator" in result.reasoning
 
 
-def test_compare_growth_yoy_inconclusive_when_prior_year_zero():
+def test_evaluate_yoy_growth_inconclusive_when_prior_year_zero():
     table = _make_table(data={("Total", 2026, "Apr"): 110.0, ("Total", 2025, "Apr"): 0.0})
-    fact = _make_fact(claim_type="growth_yoy", value=10.0)
+    fact = _make_fact(operation="yoy_growth", claimed_value=10.0)
 
-    result = _compare_growth_yoy(fact, [_make_source(table)])
+    result = _evaluate_fact(fact, [_make_source(table)])
 
     assert result.verdict == "Inconclusive"
     assert "undefined" in result.reasoning
 
 
-def test_compare_growth_yoy_inconclusive_when_metric_not_found_in_any_source():
+def test_evaluate_yoy_growth_inconclusive_when_metric_not_found_in_any_source():
     table = _make_table(data={})
-    fact = _make_fact(claim_type="growth_yoy", metric_label="Nonexistent Metric", value=10.0)
+    fact = _make_fact(
+        operation="yoy_growth", periods=[_make_period(metric_label="Nonexistent Metric")], claimed_value=10.0
+    )
 
-    result = _compare_growth_yoy(fact, [_make_source(table)])
+    result = _evaluate_fact(fact, [_make_source(table)])
 
     assert result.verdict == "Inconclusive"
-    assert "yoy numerator" in result.reasoning
+    assert "Nonexistent Metric" in result.reasoning
+
+
+# ---------------------------------------------------------------------------
+# _evaluate_fact — operation="average" / "sum"
+# ---------------------------------------------------------------------------
+
+def _range_periods(months, metric="Total", year=2026):
+    return [_make_period(metric_label=metric, year=year, month=m) for m in months]
+
+
+def test_evaluate_average_entailed():
+    table = _make_table(data={
+        ("Total", 2026, "Jan"): 100.0, ("Total", 2026, "Feb"): 105.0,
+        ("Total", 2026, "Mar"): 98.0, ("Total", 2026, "Apr"): 110.0,
+    })
+    fact = _make_fact(operation="average", periods=_range_periods(["Jan", "Feb", "Mar", "Apr"]), claimed_value=103.25)
+
+    result = _evaluate_fact(fact, [_make_source(table)])
+
+    assert result.verdict == "Entailed"
+    assert result.computed_value == pytest.approx(103.25)
+    assert len(result.periods) == 4
+
+
+def test_evaluate_average_refuted():
+    table = _make_table(data={
+        ("Total", 2026, "Jan"): 100.0, ("Total", 2026, "Feb"): 105.0,
+        ("Total", 2026, "Mar"): 98.0, ("Total", 2026, "Apr"): 110.0,
+    })
+    fact = _make_fact(operation="average", periods=_range_periods(["Jan", "Feb", "Mar", "Apr"]), claimed_value=110.0)
+
+    result = _evaluate_fact(fact, [_make_source(table)])
+
+    assert result.verdict == "Refuted"
+
+
+def test_evaluate_average_inconclusive_when_one_month_missing():
+    table = _make_table(data={
+        ("Total", 2026, "Jan"): 100.0, ("Total", 2026, "Feb"): 105.0, ("Total", 2026, "Mar"): 98.0,
+    })
+    fact = _make_fact(operation="average", periods=_range_periods(["Jan", "Feb", "Mar", "Apr"]), claimed_value=103.25)
+
+    result = _evaluate_fact(fact, [_make_source(table)])
+
+    assert result.verdict == "Inconclusive"
+    assert "Total Apr 2026" in result.reasoning
+
+
+def test_evaluate_sum_entailed():
+    table = _make_table(data={("Total", 2026, "Jan"): 100.0, ("Total", 2026, "Feb"): 100.0})
+    fact = _make_fact(operation="sum", periods=_range_periods(["Jan", "Feb"]), claimed_value=200.0)
+
+    result = _evaluate_fact(fact, [_make_source(table)])
+
+    assert result.verdict == "Entailed"
+    assert result.computed_value == pytest.approx(200.0)
+
+
+# ---------------------------------------------------------------------------
+# _evaluate_fact — operation="diff"
+# ---------------------------------------------------------------------------
+
+def test_evaluate_diff_entailed_later_minus_earlier():
+    table = _make_table(data={("Total", 2026, "Jan"): 100.0, ("Total", 2026, "Apr"): 150.0})
+    fact = _make_fact(operation="diff", periods=_range_periods(["Jan", "Apr"]), claimed_value=50.0)
+
+    result = _evaluate_fact(fact, [_make_source(table)])
+
+    assert result.verdict == "Entailed"
+    assert result.computed_value == pytest.approx(50.0)
+
+
+# ---------------------------------------------------------------------------
+# _evaluate_fact — operation="ratio"
+# ---------------------------------------------------------------------------
+
+def test_evaluate_ratio_entailed_as_percentage():
+    table = _make_table(data={("Kredit", 2026, "Apr"): 850.0, ("DPK", 2026, "Apr"): 1000.0})
+    fact = _make_fact(
+        operation="ratio",
+        periods=[_make_period(metric_label="Kredit"), _make_period(metric_label="DPK")],
+        claimed_value=85.0,
+        unit="persen",
+    )
+
+    result = _evaluate_fact(fact, [_make_source(table)])
+
+    assert result.verdict == "Entailed"
+    assert result.computed_value == pytest.approx(85.0)
+
+
+def test_evaluate_ratio_inconclusive_when_denominator_zero():
+    table = _make_table(data={("Kredit", 2026, "Apr"): 850.0, ("DPK", 2026, "Apr"): 0.0})
+    fact = _make_fact(
+        operation="ratio",
+        periods=[_make_period(metric_label="Kredit"), _make_period(metric_label="DPK")],
+        claimed_value=85.0,
+        unit="persen",
+    )
+
+    result = _evaluate_fact(fact, [_make_source(table)])
+
+    assert result.verdict == "Inconclusive"
+    assert "tidak terdefinisi" in result.reasoning
+
+
+# ---------------------------------------------------------------------------
+# _evaluate_fact — operation="is_increasing" / "is_decreasing" / "is_stable"
+# ---------------------------------------------------------------------------
+
+def test_evaluate_is_increasing_entailed_when_strictly_increasing():
+    table = _make_table(data={
+        ("Total", 2026, "Jan"): 100.0, ("Total", 2026, "Feb"): 105.0, ("Total", 2026, "Mar"): 110.0,
+    })
+    fact = _make_fact(
+        operation="is_increasing", periods=_range_periods(["Jan", "Feb", "Mar"]),
+        claimed_value=None, unit=None,
+    )
+
+    result = _evaluate_fact(fact, [_make_source(table)])
+
+    assert result.verdict == "Entailed"
+    assert result.claimed_value is None
+
+
+def test_evaluate_is_decreasing_refuted_when_actually_increasing():
+    table = _make_table(data={
+        ("Total", 2026, "Jan"): 100.0, ("Total", 2026, "Feb"): 105.0, ("Total", 2026, "Mar"): 110.0,
+    })
+    fact = _make_fact(
+        operation="is_decreasing", periods=_range_periods(["Jan", "Feb", "Mar"]),
+        claimed_value=None, unit=None,
+    )
+
+    result = _evaluate_fact(fact, [_make_source(table)])
+
+    assert result.verdict == "Refuted"
+
+
+def test_evaluate_is_stable_entailed_when_within_tolerance():
+    table = _make_table(data={
+        ("Total", 2026, "Jan"): 100.0, ("Total", 2026, "Feb"): 100.02, ("Total", 2026, "Mar"): 100.0,
+    })
+    fact = _make_fact(
+        operation="is_stable", periods=_range_periods(["Jan", "Feb", "Mar"]),
+        claimed_value=None, unit=None,
+    )
+
+    result = _evaluate_fact(fact, [_make_source(table)])
+
+    assert result.verdict == "Entailed"
 
 
 # ---------------------------------------------------------------------------
@@ -175,32 +333,35 @@ def test_compare_growth_yoy_inconclusive_when_metric_not_found_in_any_source():
 
 def test_deduplicate_facts_keeps_first_occurrence_for_same_key():
     f1 = _make_fact(context_quote="first")
-    f2 = _make_fact(context_quote="second")  # same (metric, year, month, claim_type)
-    f3 = _make_fact(month="May", context_quote="third")
+    f2 = _make_fact(context_quote="second")  # same (operation, periods)
+    f3 = _make_fact(periods=[_make_period(month="May")], context_quote="third")
 
     result = _deduplicate_facts([f1, f2, f3])
 
     assert len(result) == 2
     assert result[0].context_quote == "first"
-    assert result[1].month == "May"
+    assert result[1].periods[0].month == "May"
 
 
 # ---------------------------------------------------------------------------
 # verify_paired (end-to-end orchestration, deps mocked)
 # ---------------------------------------------------------------------------
 
+# Note: PDF extraction / vision fallback is no longer verify_paired's concern - it now takes
+# already-extracted narrative_text (see pdf_extraction.extract_narrative_text, tested in
+# tests/test_pdf_extraction.py) so that fact-verification and typo_checker.check_typos can share
+# one extraction pass instead of each re-running it.
+
 @patch("paired_verifier.extract_structured_facts_async")
-@patch("paired_verifier.extract_text_from_pdf")
 @patch("paired_verifier.parse_bi_table")
-def test_verify_paired_end_to_end_produces_entailed_verdict(mock_parse, mock_extract_text, mock_extract_facts):
+def test_verify_paired_end_to_end_produces_entailed_verdict(mock_parse, mock_extract_facts):
     table = _make_table(data={("Total", 2026, "Apr"): 10355.1})
     mock_parse.return_value = table
-    mock_extract_text.return_value = "[== Halaman 1 ==]\n" + "x" * 250  # long enough to skip vision fallback
     mock_extract_facts.return_value = [_make_fact()]
 
     response = asyncio.run(
         verify_paired(
-            pdf_bytes=b"%PDF-1.4 fake",
+            narrative_text="[== Halaman 1 ==]\n" + "x" * 250,
             excel_sources=[(b"xls-bytes", "I.1", "TABEL1_1.xls")],
             llm=Mock(),
         )
@@ -213,52 +374,19 @@ def test_verify_paired_end_to_end_produces_entailed_verdict(mock_parse, mock_ext
     mock_parse.assert_called_once_with(b"xls-bytes", "I.1")
 
 
-@patch("paired_verifier.extract_text_from_pdf_vision_async")
 @patch("paired_verifier.extract_structured_facts_async")
-@patch("paired_verifier.extract_text_from_pdf")
 @patch("paired_verifier.parse_bi_table")
-def test_verify_paired_falls_back_to_vision_when_pdf_text_too_short(
-    mock_parse, mock_extract_text, mock_extract_facts, mock_vision
-):
+def test_verify_paired_returns_no_facts_when_narrative_has_nothing_extractable(mock_parse, mock_extract_facts):
     mock_parse.return_value = _make_table(data={})
-    mock_extract_text.return_value = "too short"
-    mock_vision.return_value = "[== Halaman 1 ==]\n" + "y" * 250
     mock_extract_facts.return_value = []
 
-    vision_llm = Mock()
     response = asyncio.run(
         verify_paired(
-            pdf_bytes=b"%PDF-1.4 fake",
+            narrative_text="[== Halaman 1 ==]\n" + "y" * 250,
             excel_sources=[(b"xls-bytes", "I.1", "TABEL1_1.xls")],
             llm=Mock(),
-            vision_llm=vision_llm,
         )
     )
 
-    mock_vision.assert_called_once_with(b"%PDF-1.4 fake", vision_llm)
     assert response.total_facts == 0
     assert response.results == []
-
-
-@patch("paired_verifier.extract_text_from_pdf_vision_async")
-@patch("paired_verifier.extract_structured_facts_async")
-@patch("paired_verifier.extract_text_from_pdf")
-@patch("paired_verifier.parse_bi_table")
-def test_verify_paired_skips_vision_fallback_when_no_vision_llm_provided(
-    mock_parse, mock_extract_text, mock_extract_facts, mock_vision
-):
-    mock_parse.return_value = _make_table(data={})
-    mock_extract_text.return_value = "too short"
-    mock_extract_facts.return_value = []
-
-    response = asyncio.run(
-        verify_paired(
-            pdf_bytes=b"%PDF-1.4 fake",
-            excel_sources=[(b"xls-bytes", "I.1", "TABEL1_1.xls")],
-            llm=Mock(),
-            vision_llm=None,
-        )
-    )
-
-    mock_vision.assert_not_called()
-    assert response.total_facts == 0

@@ -227,7 +227,11 @@ select { cursor: pointer; }
 }
 .dz-icon .material-symbols-outlined { color: var(--blue-500); font-size: 26px; }
 .dz-title { font-size: 13px; font-weight: 600; color: var(--text-900); margin-bottom: 3px; }
-.dz-sub   { font-size: 11px; color: var(--text-400); }
+.dz-sub   {
+  font-size: 11px; color: var(--text-400);
+  width: 100%; max-width: 100%; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap;
+}
 .dz-filename { font-size: 11px; color: var(--blue-500); margin-top: 8px; font-weight: 600; }
 
 .dropzone-sm {
@@ -237,6 +241,7 @@ select { cursor: pointer; }
   cursor: pointer; gap: 5px;
   background: linear-gradient(180deg, #FAFCFF, var(--page-bg));
   transition: all 0.15s; text-align: center;
+  min-width: 0;
 }
 .dropzone-sm:hover, .dropzone-sm.drag-over {
   border-color: var(--blue-400);
@@ -249,7 +254,7 @@ select { cursor: pointer; }
 /* ── Upload row ── */
 .upload-row { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
 @media (max-width: 560px) { .upload-row { grid-template-columns: 1fr; } }
-.upload-field { display: flex; flex-direction: column; gap: 7px; }
+.upload-field { display: flex; flex-direction: column; gap: 7px; min-width: 0; }
 .upload-label {
   font-size: 10px; font-weight: 700; color: var(--text-500);
   text-transform: uppercase; letter-spacing: 0.07em;
@@ -393,8 +398,21 @@ table.data-table tbody tr:hover { background: var(--blue-50); }
   padding: 2px 7px; border-radius: 4px; white-space: nowrap;
 }
 
+/* ── Toolbar row: search + source/page filters ── */
+.toolbar-row {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding-top: 20px; border-top: 1px solid var(--border);
+}
+.search-box { position: relative; flex: 1 1 200px; min-width: 160px; }
+.search-box .material-symbols-outlined {
+  position: absolute; left: 10px; top: 50%; transform: translateY(-50%);
+  font-size: 16px; color: var(--text-400); pointer-events: none;
+}
+.search-box input { padding-left: 32px; }
+.toolbar-row select { width: auto; flex: 0 0 auto; min-width: 132px; font-size: 12px; padding: 8px 12px; }
+
 /* ── Filter bar ── */
-.filter-bar { display: flex; gap: 6px; margin-top: 28px; margin-bottom: 14px; flex-wrap: wrap; }
+.filter-bar { display: flex; gap: 6px; margin-top: 10px; margin-bottom: 14px; flex-wrap: wrap; }
 .filter-btn {
   background: var(--white); border: 1px solid var(--border);
   border-radius: 999px; padding: 5px 14px; font-size: 11px;
@@ -415,13 +433,14 @@ table.data-table tbody tr:hover { background: var(--blue-50); }
 
 /* ── Paired: report layout ── */
 .report-top {
-  display: flex; align-items: stretch; gap: 20px; margin-bottom: 18px;
+  display: flex; align-items: stretch; gap: 20px; margin-bottom: 28px;
 }
 .donut-wrap {
   flex-shrink: 0; display: flex; align-items: center; justify-content: center;
-  background: linear-gradient(145deg, #FFFFFF, #F3F7FF);
-  border: 1px solid var(--border); border-radius: var(--r-xl);
-  padding: 20px; box-shadow: 0 2px 10px rgba(11,31,58,0.06);
+  padding: 20px;
+}
+.donut-wrap svg {
+  filter: drop-shadow(0 3px 6px rgba(11,31,58,0.16)) drop-shadow(0 1px 2px rgba(11,31,58,0.1));
 }
 .report-stats { display: flex; flex-direction: column; gap: 10px; flex: 1; }
 .stat-row { display: flex; gap: 10px; flex: 1; }
@@ -477,6 +496,62 @@ table.data-table tbody tr:hover { background: var(--blue-50); }
 .fact-val-label { color: var(--text-400); font-size: 11px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.05em; }
 .fact-val       { font-weight: 700; color: var(--text-900); }
 .fact-arrow     { color: var(--border-dark); font-size: 14px; }
+
+.fact-periods { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+.fact-period-chip {
+  font-size: 10px; font-weight: 600; color: var(--text-500);
+  background: var(--blue-50); border: 1px solid var(--blue-100);
+  border-radius: 4px; padding: 1px 7px; white-space: nowrap;
+}
+
+/* ── Paired: typo/grammar section ── */
+.typo-section { margin-top: 28px; padding-top: 20px; border-top: 1px solid var(--border); }
+.typo-section-title { font-size: 14px; font-weight: 700; color: var(--text-900); margin-bottom: 12px; display: flex; align-items: center; gap: 8px; }
+.typo-stat-chips { display: flex; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; }
+.typo-chip {
+  font-size: 11px; font-weight: 600; padding: 4px 10px; border-radius: 999px;
+  background: var(--blue-50); border: 1px solid var(--blue-100); color: var(--text-500);
+}
+.typo-cards { display: flex; flex-direction: column; gap: 8px; }
+.typo-card {
+  background: var(--white); border: 1px solid var(--border);
+  border-left: 4px solid var(--border); border-radius: var(--r-lg);
+  padding: 12px 16px; box-shadow: 0 1px 5px rgba(11,31,58,0.05);
+}
+.typo-card.ejaan      { border-left-color: #EF4444; }
+.typo-card.tidak_baku { border-left-color: #F59E0B; }
+.typo-card.grammar    { border-left-color: #3B82F6; }
+.typo-card-top { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; flex-wrap: wrap; }
+.typo-word { font-size: 13px; font-weight: 700; color: var(--text-900); }
+.typo-suggestion { font-size: 12px; color: var(--green-700); font-weight: 600; }
+.typo-explanation { font-size: 12px; color: var(--text-500); line-height: 1.6; }
+
+.badge.ejaan      { background: linear-gradient(135deg, #FEE2E2, #FECACA); color: var(--red-700); }
+.badge.tidak_baku { background: linear-gradient(135deg, #FEF3C7, #FDE68A); color: var(--amber-700); }
+.badge.grammar    { background: linear-gradient(135deg, #DBEAFE, #BFDBFE); color: var(--blue-600); }
+
+/* ── Paired: report sub-tabs (Cek Fakta / Cek Ejaan) ── */
+.report-subtabs { display: flex; gap: 8px; margin-bottom: 18px; }
+.report-subtab-btn {
+  flex: 1; display: flex; align-items: center; justify-content: center; gap: 6px;
+  padding: 10px 16px; border-radius: var(--r-lg); border: 1px solid var(--border);
+  background: var(--white); color: var(--text-500); font-size: 13px; font-weight: 600;
+  cursor: pointer; transition: all 0.15s; font-family: inherit;
+}
+.report-subtab-btn:hover { border-color: var(--navy-700); color: var(--navy-900); background: var(--blue-50); }
+.report-subtab-btn.active {
+  background: linear-gradient(135deg, #1e4fba, #0B1F3A); border-color: transparent;
+  color: white; box-shadow: 0 2px 8px rgba(11,31,58,0.22);
+}
+.report-subtab-btn .material-symbols-outlined { font-size: 17px; }
+.subtab-count {
+  font-size: 11px; font-weight: 700; padding: 1px 8px; border-radius: 999px;
+  background: var(--blue-50); color: var(--navy-900);
+}
+.report-subtab-btn.active .subtab-count { background: rgba(255,255,255,0.22); color: white; }
+.report-subtab-btn.has-issues:not(.active) .subtab-count { background: #FEE2E2; color: var(--red-700); }
+.report-tab-panel { display: none; }
+.report-tab-panel.active { display: block; }
 .fact-val.ok  { color: #16A34A; }
 .fact-val.bad { color: #DC2626; }
 
@@ -634,6 +709,10 @@ table.data-table tbody tr:hover { background: var(--blue-50); }
       <span class="material-symbols-outlined">compare_arrows</span>
       <span class="nav-text">Verifikasi Berpasangan</span>
     </a>
+    <a class="nav-item inactive-nav" id="demo-nav-link" href="?demo=1" title="Lihat Contoh Tampilan Hasil">
+      <span class="material-symbols-outlined">visibility</span>
+      <span class="nav-text">Lihat Contoh Hasil</span>
+    </a>
     <div class="nav-section-label" style="margin-top:8px">Data</div>
     <a class="nav-item inactive-nav" data-tab="data" title="Lihat Data">
       <span class="material-symbols-outlined">table_chart</span>
@@ -716,10 +795,12 @@ table.data-table tbody tr:hover { background: var(--blue-50); }
 
 <script>
   const PANEL_TITLES = { paired: "Verifikasi Berpasangan", data: "Lihat Data" };
+  let isDemoMode = new URLSearchParams(location.search).get("demo") === "1";
 
   document.querySelectorAll(".nav-item[data-tab]").forEach((item) => {
     item.addEventListener("click", () => {
       const tab = item.dataset.tab;
+      if (tab === "paired" && isDemoMode) resetPairedPanel();
       document.querySelectorAll(".nav-item[data-tab]").forEach((n) => {
         n.classList.remove("active-nav");
         n.classList.add("inactive-nav");
@@ -767,20 +848,25 @@ table.data-table tbody tr:hover { background: var(--blue-50); }
     });
   }
 
+  function setFilenameText(fn, name) {
+    fn.textContent = name;
+    fn.title = name;
+  }
+
   // Paired dropzones
   function setupDropzone(dzId, inpId, fnId) {
     const dz  = document.getElementById(dzId);
     const inp = document.getElementById(inpId);
     const fn  = document.getElementById(fnId);
     dz.addEventListener("click", () => inp.click());
-    inp.addEventListener("change", () => { fn.textContent = inp.files[0]?.name || "Belum ada file dipilih"; });
+    inp.addEventListener("change", () => setFilenameText(fn, inp.files[0]?.name || "Belum ada file dipilih"));
     dz.addEventListener("dragover", (e) => { e.preventDefault(); dz.classList.add("drag-over"); });
     dz.addEventListener("dragleave", () => dz.classList.remove("drag-over"));
     dz.addEventListener("drop", (e) => {
       e.preventDefault();
       dz.classList.remove("drag-over");
       const file = e.dataTransfer.files[0];
-      if (file) { const dt = new DataTransfer(); dt.items.add(file); inp.files = dt.files; fn.textContent = file.name; }
+      if (file) { const dt = new DataTransfer(); dt.items.add(file); inp.files = dt.files; setFilenameText(fn, file.name); }
     });
   }
   setupDropzone("paired-pdf-dropzone", "paired-pdf", "paired-pdf-filename");
@@ -791,14 +877,14 @@ table.data-table tbody tr:hover { background: var(--blue-50); }
 
   function attachDropzoneBehavior(dz, inp, fn) {
     dz.addEventListener("click", () => inp.click());
-    inp.addEventListener("change", () => { fn.textContent = inp.files[0]?.name || "Pilih file Excel"; });
+    inp.addEventListener("change", () => setFilenameText(fn, inp.files[0]?.name || "Pilih file Excel"));
     dz.addEventListener("dragover", (e) => { e.preventDefault(); dz.classList.add("drag-over"); });
     dz.addEventListener("dragleave", () => dz.classList.remove("drag-over"));
     dz.addEventListener("drop", (e) => {
       e.preventDefault();
       dz.classList.remove("drag-over");
       const file = e.dataTransfer.files[0];
-      if (file) { const dt = new DataTransfer(); dt.items.add(file); inp.files = dt.files; fn.textContent = file.name; }
+      if (file) { const dt = new DataTransfer(); dt.items.add(file); inp.files = dt.files; setFilenameText(fn, file.name); }
     });
   }
 
@@ -815,7 +901,7 @@ table.data-table tbody tr:hover { background: var(--blue-50); }
     container.className = "excel-source-entry";
     container.innerHTML = `
       <div class="source-entry-header">
-        <div class="dropzone-sm excel-dz" id="excel-dz-${uid}" style="min-height:56px;padding:10px 12px">
+        <div class="dropzone-sm excel-dz" id="excel-dz-${uid}">
           <span class="material-symbols-outlined">table_chart</span>
           <div class="dz-sub" id="excel-fn-${uid}">Pilih file Excel</div>
           <input type="file" id="excel-inp-${uid}" accept="${EXCEL_ACCEPT}" style="display:none">
@@ -908,7 +994,11 @@ table.data-table tbody tr:hover { background: var(--blue-50); }
 
   // Paired verifier
   const VERDICT_LABEL = { Entailed: "Sesuai", Refuted: "Tidak Sesuai", Inconclusive: "Tidak Cukup Data" };
-  const TYPE_LABEL    = { absolute: "Level", growth_yoy: "% YoY" };
+  const TYPE_LABEL    = {
+    value: "Nilai", yoy_growth: "% YoY", average: "Rata-rata", sum: "Total",
+    diff: "Selisih", ratio: "Rasio",
+    is_increasing: "Tren Naik", is_decreasing: "Tren Turun", is_stable: "Tren Stabil",
+  };
 
   function fmtValue(val, unit) {
     if (val === null || val === undefined) return '<span class="na">—</span>';
@@ -983,54 +1073,197 @@ table.data-table tbody tr:hover { background: var(--blue-50); }
       <button class="filter-btn" data-filter="Inconclusive">Tidak Cukup Data (${i})</button>
     </div>`;
 
+    const uniqueSources = [...new Set(data.results.map((it) => it.matched_excel_source).filter(Boolean))];
+    const uniquePages = [...new Set(data.results.map((it) => it.page_number).filter((p) => p != null))]
+      .sort((a, b) => a - b);
+
+    const sourceFilter = uniqueSources.length > 1
+      ? `<select id="fact-source-select" title="Filter berdasarkan sumber Excel">
+          <option value="">Semua Sumber</option>
+          ${uniqueSources.map((s) => `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join("")}
+        </select>` : "";
+    const pageFilter = uniquePages.length > 1
+      ? `<select id="fact-page-select" title="Filter berdasarkan halaman PDF">
+          <option value="">Semua Halaman</option>
+          ${uniquePages.map((p) => `<option value="${p}">Halaman ${p}</option>`).join("")}
+        </select>` : "";
+
+    const toolbarRow = total > 0 ? `<div class="toolbar-row">
+      <div class="search-box">
+        <span class="material-symbols-outlined">search</span>
+        <input type="text" id="fact-search-inp" placeholder="Cari indikator atau kutipan...">
+      </div>
+      ${sourceFilter}
+      ${pageFilter}
+    </div>` : "";
+
     const cards = !data.results.length
       ? "<p class='muted-text'>Tidak ada fakta yang dapat diverifikasi.</p>"
       : data.results.map((item) => {
           const verdict  = item.verdict;
           const badgeCls = verdict === "Entailed" ? "Entailed" : verdict === "Refuted" ? "Refuted" : "Inconclusive";
-          const period   = [item.month, item.year].filter(Boolean).join(" ");
-          const pdfVal   = fmtValue(item.pdf_value, item.pdf_unit === "persen_yoy" ? "persen_yoy" : item.pdf_unit);
-          const xlVal    = item.excel_value !== null && item.excel_value !== undefined
-            ? fmtValue(item.excel_value, item.excel_unit === "persen_yoy" ? "persen_yoy" : item.excel_unit)
+          const periods  = item.periods || [];
+          const period   = periods.length === 1
+            ? [periods[0].month, periods[0].year].filter(Boolean).join(" ")
+            : periods.length > 1
+              ? `${periods[0].month} ${periods[0].year}–${periods[periods.length - 1].month} ${periods[periods.length - 1].year}`
+              : "";
+          const opLabel  = TYPE_LABEL[item.operation] || item.operation;
+          const hasClaimed = item.claimed_value !== null && item.claimed_value !== undefined;
+          const claimedVal = hasClaimed
+            ? fmtValue(item.claimed_value, item.claimed_unit === "persen_yoy" ? "persen_yoy" : item.claimed_unit)
             : null;
-          const pdfCls   = verdict === "Refuted" ? "bad" : verdict === "Entailed" ? "ok" : "";
+          const computedVal = item.computed_value !== null && item.computed_value !== undefined
+            ? fmtValue(item.computed_value, item.computed_unit === "persen_yoy" ? "persen_yoy" : item.computed_unit)
+            : null;
+          const valCls   = verdict === "Refuted" ? "bad" : verdict === "Entailed" ? "ok" : "";
           const pageBadge = item.page_number != null ? `<span class="page-badge">Hal.&nbsp;${item.page_number}</span>` : "";
           const sourceBadge = item.matched_excel_source ? `<span class="source-badge" title="${escapeHtml(item.matched_excel_source)}">${escapeHtml(item.matched_excel_source)}</span>` : "";
           const quote    = item.context_quote ? `<div class="fact-quote">"${escapeHtml(item.context_quote)}"</div>` : "";
-          let comparison = `<span class="fact-val-label">PDF:</span> <span class="fact-val ${pdfCls}">${pdfVal}</span>`;
-          if (xlVal) {
-            comparison += ` <span class="fact-arrow">&#8594;</span> <span class="fact-val-label">Referensi:</span> <span class="fact-val">${xlVal}</span>`;
+
+          const periodChips = periods.length > 1
+            ? `<div class="fact-periods">${periods.map((p) => {
+                const v = p.excel_value !== null && p.excel_value !== undefined
+                  ? p.excel_value.toLocaleString("id-ID", { minimumFractionDigits: 1, maximumFractionDigits: 4 })
+                  : "—";
+                return `<span class="fact-period-chip">${escapeHtml(p.month)} ${p.year}: ${v}</span>`;
+              }).join("")}</div>`
+            : "";
+
+          let comparison;
+          if (hasClaimed) {
+            comparison = `<span class="fact-val-label">PDF:</span> <span class="fact-val ${valCls}">${claimedVal}</span>`;
+            if (computedVal) {
+              comparison += ` <span class="fact-arrow">&#8594;</span> <span class="fact-val-label">Referensi:</span> <span class="fact-val">${computedVal}</span>`;
+            } else if (verdict === "Inconclusive") {
+              comparison += ` <span class="fact-arrow">&#8594;</span> <span class="na">Tidak ditemukan di data</span>`;
+            }
           } else if (verdict === "Inconclusive") {
-            comparison += ` <span class="fact-arrow">&#8594;</span> <span class="na">Tidak ditemukan di data</span>`;
+            comparison = `<span class="na">Tidak ditemukan di data</span>`;
+          } else {
+            comparison = `<span class="fact-val ${valCls}">${escapeHtml(VERDICT_LABEL[verdict] || verdict)}</span> <span class="fact-val-label">terhadap klaim tren</span>`;
           }
+
           const hidden = defaultFilter !== "all" && verdict !== defaultFilter ? " hidden-fact" : "";
-          return `<div class="fact-card ${verdict}${hidden}" data-verdict="${escapeHtml(verdict)}">
+          const searchText = escapeHtml(`${item.metric_label} ${item.context_quote || ""}`.toLowerCase());
+          return `<div class="fact-card ${verdict}${hidden}" data-verdict="${escapeHtml(verdict)}" data-source="${escapeHtml(item.matched_excel_source || "")}" data-page="${item.page_number ?? ""}" data-search="${searchText}">
             <div class="fact-card-top">
               <span class="badge ${badgeCls}">${escapeHtml(VERDICT_LABEL[verdict] || verdict)}</span>
+              <span class="source-badge">${escapeHtml(opLabel)}</span>
               <span class="fact-metric">${escapeHtml(item.metric_label)}</span>
               ${period ? `<span class="fact-period">${escapeHtml(period)}</span>` : ""}
               ${pageBadge}
               ${sourceBadge}
             </div>
             ${quote}
+            ${periodChips}
             <div class="fact-comparison">${comparison}</div>
           </div>`;
         }).join("");
 
-    return `<div class="paired-report">${header}${filterBar}<div class="fact-cards">${cards}</div></div>`;
+    const typoCheck = data.typo_check || null;
+    const typoIssueCount = typoCheck ? typoCheck.total_issues : 0;
+    const hasTypoIssues = typoIssueCount > 0;
+
+    const subtabs = `<div class="report-subtabs">
+      <button class="report-subtab-btn active" data-report-tab="fact">
+        <span class="material-symbols-outlined">fact_check</span>
+        Cek Fakta <span class="subtab-count">${total}</span>
+      </button>
+      <button class="report-subtab-btn${hasTypoIssues ? ' has-issues' : ''}" data-report-tab="typo">
+        <span class="material-symbols-outlined">spellcheck</span>
+        Cek Ejaan &amp; Tata Bahasa <span class="subtab-count">${typoIssueCount}</span>
+      </button>
+    </div>`;
+
+    const factPanel = `<div class="report-tab-panel active" data-report-panel="fact">
+      ${toolbarRow}${filterBar}<div class="fact-cards">${cards}</div>
+    </div>`;
+
+    const typoPanel = `<div class="report-tab-panel" data-report-panel="typo">
+      ${renderTypoSection(typoCheck)}
+    </div>`;
+
+    return `<div class="paired-report">${header}${subtabs}${factPanel}${typoPanel}</div>`;
+  }
+
+  const TYPO_CATEGORY_LABEL = { ejaan: "Ejaan", tidak_baku: "Tidak Baku", grammar: "Tata Bahasa" };
+
+  function renderTypoSection(typoCheck) {
+    if (!typoCheck) {
+      return "<p class='muted-text'>Data pengecekan ejaan &amp; tata bahasa tidak tersedia untuk hasil ini.</p>";
+    }
+    const { ejaan_count, tidak_baku_count, grammar_count, issues } = typoCheck;
+
+    const chips = `<div class="typo-stat-chips">
+      <span class="typo-chip">Ejaan: ${ejaan_count}</span>
+      <span class="typo-chip">Tidak Baku: ${tidak_baku_count}</span>
+      <span class="typo-chip">Tata Bahasa: ${grammar_count}</span>
+    </div>`;
+
+    const cards = !issues.length
+      ? "<p class='muted-text'>Tidak ditemukan isu ejaan atau tata bahasa pada dokumen ini.</p>"
+      : issues.map((issue) => {
+          const pageBadge = issue.page_number != null ? `<span class="page-badge">Hal.&nbsp;${issue.page_number}</span>` : "";
+          return `<div class="typo-card ${escapeHtml(issue.category)}">
+            <div class="typo-card-top">
+              <span class="badge ${escapeHtml(issue.category)}">${escapeHtml(TYPO_CATEGORY_LABEL[issue.category] || issue.category)}</span>
+              <span class="typo-word">${escapeHtml(issue.word)}</span>
+              <span class="fact-arrow">&#8594;</span>
+              <span class="typo-suggestion">${escapeHtml(issue.suggestion)}</span>
+              ${pageBadge}
+            </div>
+            <div class="typo-explanation">${escapeHtml(issue.explanation)}</div>
+          </div>`;
+        }).join("");
+
+    return `${chips}<div class="typo-cards">${cards}</div>`;
   }
 
   function attachPairedHandlers(resultEl) {
+    resultEl.querySelectorAll(".report-subtab-btn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const tab = btn.dataset.reportTab;
+        resultEl.querySelectorAll(".report-subtab-btn").forEach((b) => b.classList.toggle("active", b === btn));
+        resultEl.querySelectorAll(".report-tab-panel").forEach((p) => {
+          p.classList.toggle("active", p.dataset.reportPanel === tab);
+        });
+      });
+    });
+
+    let currentVerdict = resultEl.querySelector(".filter-btn.active")?.dataset.filter || "all";
+    let currentSearch = "";
+    let currentSource = "";
+    let currentPage = "";
+
+    function applyFilters() {
+      const q = currentSearch.trim().toLowerCase();
+      resultEl.querySelectorAll(".fact-card").forEach((card) => {
+        const matchesVerdict = currentVerdict === "all" || card.dataset.verdict === currentVerdict;
+        const matchesSource  = !currentSource || card.dataset.source === currentSource;
+        const matchesPage    = !currentPage || card.dataset.page === currentPage;
+        const matchesSearch  = !q || card.dataset.search.includes(q);
+        card.classList.toggle("hidden-fact", !(matchesVerdict && matchesSource && matchesPage && matchesSearch));
+      });
+    }
+
     resultEl.querySelectorAll(".filter-btn").forEach((btn) => {
       btn.addEventListener("click", () => {
         resultEl.querySelectorAll(".filter-btn").forEach((b) => b.classList.remove("active"));
         btn.classList.add("active");
-        const filter = btn.dataset.filter;
-        resultEl.querySelectorAll(".fact-card").forEach((card) => {
-          card.classList.toggle("hidden-fact", filter !== "all" && card.dataset.verdict !== filter);
-        });
+        currentVerdict = btn.dataset.filter;
+        applyFilters();
       });
     });
+
+    const searchInp = resultEl.querySelector("#fact-search-inp");
+    if (searchInp) searchInp.addEventListener("input", () => { currentSearch = searchInp.value; applyFilters(); });
+
+    const sourceSelect = resultEl.querySelector("#fact-source-select");
+    if (sourceSelect) sourceSelect.addEventListener("change", () => { currentSource = sourceSelect.value; applyFilters(); });
+
+    const pageSelect = resultEl.querySelector("#fact-page-select");
+    if (pageSelect) pageSelect.addEventListener("change", () => { currentPage = pageSelect.value; applyFilters(); });
   }
 
   document.querySelector('[data-action="paired"]').addEventListener("click", (e) => {
@@ -1066,6 +1299,173 @@ table.data-table tbody tr:hover { background: var(--blue-50); }
   document.getElementById("sidebar-toggle").addEventListener("click", () => {
     document.getElementById("sidebar").classList.toggle("collapsed");
   });
+
+  // ── Dummy preview (?demo=1) ──────────────────────────────────────────────
+  const DEMO_DATA = {
+    pdf_filename: "Contoh-Laporan-M2-Maret-2026.pdf",
+    excel_filenames: ["Contoh-Tabel1_1.xls"],
+    excel_sheets: ["I.1"],
+    excel_units: ["persen", "miliar Rp", "juta USD"],
+    total_facts: 8,
+    entailed_count: 5,
+    refuted_count: 2,
+    inconclusive_count: 1,
+    results: [
+      {
+        operation: "yoy_growth", metric_label: "Inflasi IHK (YoY)", matched_excel_source: "Contoh-Tabel1_1.xls / I.1",
+        periods: [
+          { metric_label: "Inflasi IHK (YoY)", year: 2026, month: "Mar", excel_value: 3.2 },
+          { metric_label: "Inflasi IHK (YoY)", year: 2025, month: "Mar", excel_value: 3.1 },
+        ],
+        claimed_value: 3.2, claimed_unit: "persen_yoy", computed_value: 3.2, computed_unit: "persen_yoy",
+        delta: 0.0, verdict: "Entailed",
+        reasoning: "Nilai pada PDF sesuai dengan data referensi.",
+        context_quote: "Inflasi IHK pada Maret 2026 tercatat sebesar 3,2% (yoy).", page_number: 2,
+      },
+      {
+        operation: "yoy_growth", metric_label: "Pertumbuhan Ekonomi (PDB)", matched_excel_source: "Contoh-Tabel1_1.xls / I.1",
+        periods: [
+          { metric_label: "Pertumbuhan Ekonomi (PDB)", year: 2026, month: "Mar", excel_value: 105.0 },
+          { metric_label: "Pertumbuhan Ekonomi (PDB)", year: 2025, month: "Mar", excel_value: 100.2 },
+        ],
+        claimed_value: 5.1, claimed_unit: "persen_yoy", computed_value: 4.8, computed_unit: "persen_yoy",
+        delta: 0.3, verdict: "Refuted",
+        reasoning: "Nilai pada PDF (5,1%) tidak sesuai dengan data referensi (4,8%).",
+        context_quote: "Pertumbuhan ekonomi triwulan I 2026 mencapai 5,1% (yoy).", page_number: 3,
+      },
+      {
+        operation: "value", metric_label: "Nilai Tukar Rupiah", matched_excel_source: "Contoh-Tabel1_1.xls / I.1",
+        periods: [{ metric_label: "Nilai Tukar Rupiah", year: 2026, month: "Mar", excel_value: 15750 }],
+        claimed_value: 15750, claimed_unit: "Rp/USD", computed_value: 15750, computed_unit: "Rp/USD",
+        delta: 0.0, verdict: "Entailed",
+        reasoning: "Nilai pada PDF sesuai dengan data referensi.",
+        context_quote: "Nilai tukar rupiah rata-rata Maret 2026 berada pada level Rp15.750 per USD.", page_number: 4,
+      },
+      {
+        operation: "value", metric_label: "Cadangan Devisa", matched_excel_source: "Contoh-Tabel1_1.xls / I.1",
+        periods: [{ metric_label: "Cadangan Devisa", year: 2026, month: "Mar", excel_value: 148.9 }],
+        claimed_value: 152.3, claimed_unit: "miliar USD", computed_value: 148.9, computed_unit: "miliar USD",
+        delta: 3.4, verdict: "Refuted",
+        reasoning: "Nilai pada PDF (152,3 miliar USD) tidak sesuai dengan data referensi (148,9 miliar USD).",
+        context_quote: "Posisi cadangan devisa akhir Maret 2026 sebesar USD152,3 miliar.", page_number: 5,
+      },
+      {
+        operation: "value", metric_label: "Suku Bunga Acuan BI7DRR", matched_excel_source: "Contoh-Tabel1_1.xls / I.1",
+        periods: [{ metric_label: "Suku Bunga Acuan BI7DRR", year: 2026, month: "Mar", excel_value: 5.75 }],
+        claimed_value: 5.75, claimed_unit: "persen", computed_value: 5.75, computed_unit: "persen",
+        delta: 0.0, verdict: "Entailed",
+        reasoning: "Nilai pada PDF sesuai dengan data referensi.",
+        context_quote: "BI mempertahankan suku bunga acuan BI7DRR pada level 5,75%.", page_number: 6,
+      },
+      {
+        operation: "yoy_growth", metric_label: "Pertumbuhan Kredit Perbankan", matched_excel_source: null,
+        periods: [],
+        claimed_value: 9.4, claimed_unit: "persen_yoy", computed_value: null, computed_unit: "persen_yoy",
+        delta: null, verdict: "Inconclusive",
+        reasoning: "Data referensi untuk metrik ini tidak ditemukan pada tabel Excel yang diunggah.",
+        context_quote: "Pertumbuhan kredit perbankan tercatat 9,4% (yoy) pada Maret 2026.", page_number: 7,
+      },
+      {
+        operation: "average", metric_label: "Penyaluran Kredit", matched_excel_source: "Contoh-Tabel1_1.xls / I.1",
+        periods: [
+          { metric_label: "Penyaluran Kredit", year: 2026, month: "Jan", excel_value: 7100.2 },
+          { metric_label: "Penyaluran Kredit", year: 2026, month: "Feb", excel_value: 7150.8 },
+          { metric_label: "Penyaluran Kredit", year: 2026, month: "Mar", excel_value: 7205.4 },
+          { metric_label: "Penyaluran Kredit", year: 2026, month: "Apr", excel_value: 7260.6 },
+        ],
+        claimed_value: 7179.3, claimed_unit: "triliun Rp", computed_value: 7179.25, computed_unit: "triliun Rp",
+        delta: 0.05, verdict: "Entailed",
+        reasoning: "Rata-rata Januari-April pada PDF sesuai dengan rata-rata data referensi.",
+        context_quote: "Rata-rata penyaluran kredit perbankan Januari-April 2026 sebesar Rp7.179,3 triliun.", page_number: 8,
+      },
+      {
+        operation: "is_increasing", metric_label: "Penyaluran Kredit", matched_excel_source: "Contoh-Tabel1_1.xls / I.1",
+        periods: [
+          { metric_label: "Penyaluran Kredit", year: 2026, month: "Jan", excel_value: 7100.2 },
+          { metric_label: "Penyaluran Kredit", year: 2026, month: "Feb", excel_value: 7150.8 },
+          { metric_label: "Penyaluran Kredit", year: 2026, month: "Mar", excel_value: 7205.4 },
+          { metric_label: "Penyaluran Kredit", year: 2026, month: "Apr", excel_value: 7260.6 },
+        ],
+        claimed_value: null, claimed_unit: null, computed_value: null, computed_unit: "triliun Rp",
+        delta: null, verdict: "Entailed",
+        reasoning: "Tren naik konsisten Januari-April sesuai dengan data referensi.",
+        context_quote: "Penyaluran kredit perbankan terus meningkat dari Januari hingga April 2026.", page_number: 8,
+      },
+    ],
+    typo_check: {
+      total_issues: 3,
+      ejaan_count: 1,
+      tidak_baku_count: 1,
+      grammar_count: 1,
+      summary: "Ditemukan 3 isu: 1 ejaan, 1 kata tidak baku, 1 tata bahasa.",
+      issues: [
+        {
+          word: "aktifitas", start: 120, end: 129, category: "tidak_baku",
+          suggestion: "aktivitas", explanation: "'aktifitas' adalah bentuk tidak baku; bentuk baku: 'aktivitas'.",
+          page_number: 2,
+        },
+        {
+          word: "ekonimi", start: 340, end: 347, category: "ejaan",
+          suggestion: "ekonomi", explanation: "Kata ini tidak ditemukan di kamus dan kemungkinan salah eja.",
+          page_number: 3,
+        },
+        {
+          word: "di catat", start: 512, end: 520, category: "grammar",
+          suggestion: "dicatat", explanation: "'catat' berperan sebagai kata kerja pasif, seharusnya ditulis serangkai dengan awalan 'di-'.",
+          page_number: 4,
+        },
+      ],
+    },
+  };
+
+  function loadDemo() {
+    setFilenameText(document.getElementById("paired-pdf-filename"), DEMO_DATA.pdf_filename);
+    const firstExcelFn = document.querySelector("#excel-sources-container .dz-sub");
+    if (firstExcelFn) setFilenameText(firstExcelFn, DEMO_DATA.excel_filenames[0]);
+    const resultEl = document.getElementById("paired-result");
+    resultEl.innerHTML = renderPairedResponse(DEMO_DATA);
+    document.getElementById("paired-container").classList.add("has-results");
+    document.getElementById("panel-paired").classList.add("has-results");
+    attachPairedHandlers(resultEl);
+  }
+
+  function enterDemoMode() {
+    isDemoMode = true;
+    history.pushState(null, "", "?demo=1");
+    document.querySelectorAll(".nav-item[data-tab]").forEach((n) => {
+      n.classList.toggle("active-nav", n.dataset.tab === "paired");
+      n.classList.toggle("inactive-nav", n.dataset.tab !== "paired");
+    });
+    document.querySelectorAll(".panel").forEach((p) => p.classList.remove("active"));
+    document.getElementById("panel-paired").classList.add("active");
+    document.getElementById("header-title").textContent = PANEL_TITLES.paired;
+    loadDemo();
+  }
+
+  function resetPairedPanel() {
+    document.getElementById("paired-pdf").value = "";
+    setFilenameText(document.getElementById("paired-pdf-filename"), "Pilih file PDF");
+
+    document.getElementById("excel-sources-container").innerHTML = "";
+    excelSources = [];
+    addExcelSource();
+
+    document.getElementById("paired-result").innerHTML = "";
+    document.getElementById("paired-container").classList.remove("has-results");
+    document.getElementById("panel-paired").classList.remove("has-results");
+
+    isDemoMode = false;
+    history.replaceState(null, "", location.pathname + location.hash);
+  }
+
+  document.getElementById("demo-nav-link").addEventListener("click", (e) => {
+    e.preventDefault();
+    enterDemoMode();
+  });
+
+  if (isDemoMode) {
+    loadDemo();
+  }
 </script>
 </body>
 </html>

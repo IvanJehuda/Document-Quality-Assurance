@@ -8,8 +8,12 @@ Two strategies:
                                    Used when the PDF has text stored as vector paths (outlined
                                    fonts) so pypdf returns empty or near-empty output.
 
-paired_verifier.py calls extract_text_from_pdf first and falls back automatically when the
-extracted text is below a minimum useful length.
+extract_narrative_text() combines both: tries pypdf first, falls back to the async vision
+path automatically when the extracted text is below a minimum useful length. Callers that need
+the narrative text for more than one downstream step (e.g. paired_verifier.py's fact-checking
+AND typo_checker.py's spelling/grammar check) should call this once and reuse the result, rather
+than re-extracting per consumer — the vision fallback is an LLM call and re-running it doubles
+cost and rate-limit exposure for no benefit.
 """
 
 import asyncio
@@ -17,6 +21,7 @@ import base64
 import io
 import logging
 import re
+from typing import Optional
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage
@@ -26,6 +31,10 @@ logger = logging.getLogger("fact-checker")
 
 # pypdf result shorter than this is treated as "extraction failed" and triggers the vision fallback.
 MIN_USEFUL_CHARS = 200
+
+# Marks the start of each page's text in extract_text_from_pdf's/vision's output.
+# Shared across modules that need to strip markers or attribute a char offset to a page.
+PAGE_MARKER_RE = re.compile(r'\[== Halaman (\d+) ==\]')
 
 _VISION_PROMPT = """\
 Halaman-halaman berikut adalah laporan statistik Bank Indonesia.
@@ -250,25 +259,38 @@ async def extract_text_from_pdf_vision_async(
     simple "copy everything" prompt and tabular rows are stripped deterministically in
     _strip_tabular_content() instead.
 
-    For Groq, a semaphore caps concurrent calls at 3 to avoid silent 429 rate-limit failures
-    (firing 9+ calls simultaneously saturates Groq's per-minute vision quota).  Failed calls
-    are retried up to twice with exponential backoff when a rate-limit error is detected.
+    Both free-tier providers throttle per request, not just per token: Groq's account-wide
+    TPM budget is easily blown by a handful of image-heavy calls, and Gemini's free tier caps
+    gemini-2.5-flash at 5 requests/minute — a 9-page document sent "in parallel" instantly
+    exceeds both. A semaphore caps concurrency per provider and failed calls are retried with
+    backoff parsed from the provider's own suggested wait time when a rate-limit error is hit.
     """
     logger.info("Rendering PDF pages at %d DPI for vision extraction (async per-page)", dpi)
     b64_pages = await asyncio.to_thread(_render_pages_to_b64, file_bytes, dpi)
     logger.info("Rendered %d pages, sending to vision LLM in parallel", len(b64_pages))
 
     prompt = _get_page_prompt(vision_llm)
-    is_groq = "Groq" in type(vision_llm).__name__
-    # Each page costs ~10k tokens. Groq's free-tier TPM limit is 30k, so 3 concurrent = ~30k+
-    # which reliably hits rate limits on the second batch. Cap at 2 to stay safely under budget.
-    semaphore = asyncio.Semaphore(2 if is_groq else len(b64_pages) + 1)
-    max_retries = 3 if is_groq else 1
+    provider_name = type(vision_llm).__name__
+    is_groq = "Groq" in provider_name
+    is_gemini = "Google" in provider_name
+    # Groq: ~7-10k tokens/page against a 30k TPM account-wide budget -> serialize (semaphore=1).
+    # Gemini free tier: hard cap of 5 requests/minute for gemini-2.5-flash -> cap at 4 concurrent
+    # to leave headroom. Other providers (e.g. local Ollama) are assumed unthrottled.
+    if is_groq:
+        semaphore = asyncio.Semaphore(1)
+        max_retries = 6
+    elif is_gemini:
+        semaphore = asyncio.Semaphore(4)
+        max_retries = 6
+    else:
+        semaphore = asyncio.Semaphore(len(b64_pages) + 1)
+        max_retries = 1
 
-    _RETRY_AFTER_RE = re.compile(r'[Pp]lease try again in (\d+\.?\d*)s')
+    # Groq says "Please try again in 9.08s"; Gemini says "Please retry in 51.95s".
+    _RETRY_AFTER_RE = re.compile(r'[Pp]lease (?:try again|retry) in (\d+\.?\d*)s')
 
     def _parse_retry_after(err: str, fallback: float) -> float:
-        """Extract Groq's suggested wait time from a rate-limit error message."""
+        """Extract the provider's suggested wait time from a rate-limit error message."""
         m = _RETRY_AFTER_RE.search(err)
         return float(m.group(1)) + 1.0 if m else fallback
 
@@ -315,3 +337,28 @@ async def extract_text_from_pdf_vision_async(
     combined = "\n\n".join(t for t in page_texts if t.strip())
     logger.info("Async vision extraction returned %d chars total", len(combined))
     return combined
+
+
+async def extract_narrative_text(file_bytes: bytes, vision_llm: Optional[BaseChatModel] = None) -> str:
+    """Extract a PDF's narrative text, falling back to vision extraction when pypdf's output is too short.
+
+    Single entry point for any caller that needs the full narrative text (with page markers) —
+    call this once and share the result across multiple downstream consumers instead of extracting
+    per-consumer, since the vision fallback is an LLM call with its own cost and rate limits.
+    """
+    text = extract_text_from_pdf(file_bytes)
+    content_chars = len(PAGE_MARKER_RE.sub('', text).strip())
+    if content_chars < MIN_USEFUL_CHARS:
+        if vision_llm is None:
+            logger.warning(
+                "PDF content too short (%d chars excl. markers) and no vision_llm provided — "
+                "pass vision_llm=get_vision_llm() to enable the fallback.",
+                content_chars,
+            )
+        else:
+            logger.info(
+                "PDF content too short (%d chars excl. markers), falling back to vision extraction",
+                content_chars,
+            )
+            text = await extract_text_from_pdf_vision_async(file_bytes, vision_llm)
+    return text

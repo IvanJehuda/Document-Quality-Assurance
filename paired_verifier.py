@@ -3,31 +3,30 @@
 Given one PDF report and one or more Excel statistical tables (BI format), verifies every
 quantitative claim in the PDF narrative against the authoritative values in the Excel sources.
 
-No SQL is generated — comparison is a direct dict lookup into the parsed Excel tables.
-Unit conversion is applied automatically (e.g. triliun Rp  ↔  miliar Rp).
-YoY growth rates are computed from the Excel itself (current month vs same month prior year).
+Claims are represented as an OPERATION over one or more (metric, year, month) data points
+(see structured_extractor.py for the full operation list: value, yoy_growth, average, sum,
+diff, ratio, is_increasing, is_decreasing, is_stable) rather than a fixed claim-type enum, so
+claims more complex than a single point-in-time value are supported without a schema change per
+pattern. No SQL is generated — every data point is a direct dict lookup into the parsed Excel
+tables; the operation itself (average, sum, diff, ratio, monotonic-trend check, unit conversion,
+YoY growth) is computed in plain Python, never by an LLM, to avoid hallucination risk in the
+comparison step.
 """
 
-import asyncio
 import logging
 from dataclasses import dataclass
-from typing import Dict, List, Literal, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from langchain_core.language_models import BaseChatModel
 
-import re
-
 from excel_parser_bi import BITableData, parse_bi_table
-from pdf_extraction import (
-    MIN_USEFUL_CHARS,
-    extract_text_from_pdf,
-    extract_text_from_pdf_vision,
-    extract_text_from_pdf_vision_async,
+from schemas import FactVerificationResult, PairedVerificationResponse, PeriodResult
+from structured_extractor import (
+    ExtractedFact,
+    PeriodPoint,
+    extract_structured_facts,
+    extract_structured_facts_async,
 )
-
-_PAGE_MARKER_RE = re.compile(r'\[== Halaman \d+ ==\]')
-from schemas import FactVerificationResult, PairedVerificationResponse
-from structured_extractor import ExtractedFact, extract_structured_facts, extract_structured_facts_async
 
 logger = logging.getLogger("fact-checker")
 
@@ -36,6 +35,11 @@ logger = logging.getLogger("fact-checker")
 # Half of one rounding unit = 0.05 in either scale.
 # False positives are more dangerous than false negatives → use strict tolerance.
 MATCH_TOLERANCE = 0.05
+
+# Operations whose comparison is a level value in fact.unit's scale, needing unit conversion
+# against the matched Excel source's unit. The rest (yoy_growth, ratio, trend checks) either
+# compare percentages directly or cancel/ignore units entirely.
+_LEVEL_OPS = {"value", "average", "sum", "diff"}
 
 
 # ---------------------------------------------------------------------------
@@ -84,199 +88,271 @@ def _unit_factor(pdf_unit: str, excel_unit: str) -> Optional[float]:
 
 
 # ---------------------------------------------------------------------------
-# Per-fact comparison (multi-source)
+# Period resolution against a single Excel source
 # ---------------------------------------------------------------------------
 
-def _compare_absolute(
-    fact: ExtractedFact,
-    sources: List[_ExcelSource],
-) -> FactVerificationResult:
-    """Compare a level/stock claim against multiple Excel sources; first match wins."""
-    for src in sources:
-        factor = _unit_factor(fact.unit, src.table.unit)
-        if factor is None:
-            continue  # unit incompatible with this source, try next
+def _try_resolve(
+    periods: List[PeriodPoint], src: _ExcelSource
+) -> Tuple[List[Tuple[str, float]], List[PeriodPoint]]:
+    """Look up every period in one Excel source.
 
-        matched_label, excel_raw = src.table.lookup_fuzzy(fact.metric_label, fact.year, fact.month)
-        if excel_raw is None:
-            continue  # metric not found in this source, try next
-
-        excel_in_pdf_unit = excel_raw / factor
-        delta = round(abs(fact.value - excel_in_pdf_unit), 4)
-        is_match = delta <= MATCH_TOLERANCE
-
-        return FactVerificationResult(
-            metric_label=fact.metric_label,
-            matched_excel_label=matched_label,
-            matched_excel_source=src.label,
-            year=fact.year,
-            month=fact.month,
-            claim_type=fact.claim_type,
-            pdf_value=fact.value,
-            pdf_unit=fact.unit,
-            excel_value=round(excel_in_pdf_unit, 4),
-            excel_unit=fact.unit,
-            delta=delta,
-            verdict="Entailed" if is_match else "Refuted",
-            reasoning=(
-                f"PDF: {fact.value} {fact.unit} | "
-                f"Excel [{src.label}] ({matched_label}): {round(excel_in_pdf_unit, 4)} {fact.unit} | "
-                f"Δ = {delta} → {'within' if is_match else 'exceeds'} tolerance {MATCH_TOLERANCE}"
-            ),
-            context_quote=fact.context_quote,
-            page_number=fact.page_number,
-        )
-
-    # Nothing found across all sources — determine best error message
-    all_incompatible = all(_unit_factor(fact.unit, src.table.unit) is None for src in sources)
-    if all_incompatible:
-        units_tried = ", ".join(f"'{src.table.unit}'" for src in sources)
-        reasoning = (
-            f"Unit conversion from '{fact.unit}' to any of [{units_tried}] is not supported. "
-            "Cannot compare."
-        )
-    else:
-        # Check if the metric label exists at all across sources (different period)
-        all_available: set = set()
-        for src in sources:
-            if _unit_factor(fact.unit, src.table.unit) is not None:
-                for period in src.table.available_periods(fact.metric_label):
-                    all_available.add(period)
-        if all_available:
-            recent = sorted(all_available, reverse=True)[:6]
-            periods_str = ", ".join(f"{m} {y}" for y, m in recent)
-            reasoning = (
-                f"Metric '{fact.metric_label}' found in Excel but no data for "
-                f"{fact.month} {fact.year}. "
-                f"Most recent available: {periods_str}."
-            )
+    Returns (resolved, missing): resolved has (matched_label, raw_value) for periods found in
+    this source (in the same order as `periods`); missing has the PeriodPoint objects that
+    weren't found. A fact's periods must ALL resolve from the SAME source (kept unit-consistent) -
+    callers should treat a non-empty `missing` as "this source can't be used for this fact".
+    """
+    resolved: List[Tuple[str, float]] = []
+    missing: List[PeriodPoint] = []
+    for p in periods:
+        label, raw = src.table.lookup_fuzzy(p.metric_label, p.year, p.month)
+        if raw is None:
+            missing.append(p)
         else:
-            reasoning = (
-                f"No data found in any Excel source for metric '{fact.metric_label}' "
-                f"at {fact.month} {fact.year}."
-            )
+            resolved.append((label, raw))
+    return resolved, missing
 
+
+def _build_periods(
+    fact_periods: List[PeriodPoint], resolved: List[Tuple[str, float]], values: List[float]
+) -> List[PeriodResult]:
+    return [
+        PeriodResult(metric_label=resolved[i][0], year=p.year, month=p.month, excel_value=round(values[i], 4))
+        for i, p in enumerate(fact_periods)
+    ]
+
+
+def _numeric_verdict(claimed: float, computed: float) -> Tuple[float, str]:
+    delta = round(abs(claimed - computed), 4)
+    return delta, ("Entailed" if delta <= MATCH_TOLERANCE else "Refuted")
+
+
+def _make_result(
+    fact: ExtractedFact,
+    periods: List[PeriodResult],
+    matched_source: Optional[str],
+    claimed_value: Optional[float],
+    claimed_unit: Optional[str],
+    computed_value: Optional[float],
+    computed_unit: Optional[str],
+    delta: Optional[float],
+    verdict: str,
+    reasoning: str,
+) -> FactVerificationResult:
     return FactVerificationResult(
-        metric_label=fact.metric_label,
-        matched_excel_label=None,
-        matched_excel_source=None,
-        year=fact.year,
-        month=fact.month,
-        claim_type=fact.claim_type,
-        pdf_value=fact.value,
-        pdf_unit=fact.unit,
-        excel_value=None,
-        excel_unit=sources[0].table.unit if sources else "",
-        delta=None,
-        verdict="Inconclusive",
+        operation=fact.operation,
+        metric_label=fact.display_label,
+        matched_excel_source=matched_source,
+        periods=periods,
+        claimed_value=claimed_value,
+        claimed_unit=claimed_unit,
+        computed_value=computed_value,
+        computed_unit=computed_unit,
+        delta=delta,
+        verdict=verdict,
         reasoning=reasoning,
         context_quote=fact.context_quote,
         page_number=fact.page_number,
     )
 
 
-def _compare_growth_yoy(
-    fact: ExtractedFact,
-    sources: List[_ExcelSource],
-) -> FactVerificationResult:
-    """Compare a yoy growth-rate claim against multiple Excel sources; first match wins."""
-    for src in sources:
-        matched_label, curr_raw = src.table.lookup_fuzzy(fact.metric_label, fact.year, fact.month)
-        if curr_raw is None:
-            continue  # metric not found in this source
+# ---------------------------------------------------------------------------
+# Per-operation computation (all arithmetic here is plain Python, never LLM output)
+# ---------------------------------------------------------------------------
 
-        prior_year = fact.year - 1
-        _, prev_raw = src.table.lookup_fuzzy(fact.metric_label, prior_year, fact.month)
+def _compute_yoy_growth(fact: ExtractedFact, resolved: List[Tuple[str, float]], src: _ExcelSource) -> FactVerificationResult:
+    p = fact.periods[0]
+    matched_label, curr_raw = resolved[0]
+    matched_source = src.label
+    prior_year = p.year - 1
+    prior_label, prior_raw = src.table.lookup_fuzzy(matched_label, prior_year, p.month)
+    current_period = PeriodResult(metric_label=matched_label, year=p.year, month=p.month, excel_value=round(curr_raw, 4))
 
-        if prev_raw is None:
-            return FactVerificationResult(
-                metric_label=fact.metric_label,
-                matched_excel_label=matched_label,
-                matched_excel_source=src.label,
-                year=fact.year,
-                month=fact.month,
-                claim_type=fact.claim_type,
-                pdf_value=fact.value,
-                pdf_unit=fact.unit,
-                excel_value=None,
-                excel_unit="persen_yoy",
-                delta=None,
-                verdict="Inconclusive",
-                reasoning=(
-                    f"No data found in Excel [{src.label}] for metric '{fact.metric_label}' "
-                    f"at {fact.month} {prior_year} (needed for yoy denominator)."
-                ),
-                context_quote=fact.context_quote,
-                page_number=fact.page_number,
-            )
-
-        if prev_raw == 0:
-            return FactVerificationResult(
-                metric_label=fact.metric_label,
-                matched_excel_label=matched_label,
-                matched_excel_source=src.label,
-                year=fact.year,
-                month=fact.month,
-                claim_type=fact.claim_type,
-                pdf_value=fact.value,
-                pdf_unit=fact.unit,
-                excel_value=None,
-                excel_unit="persen_yoy",
-                delta=None,
-                verdict="Inconclusive",
-                reasoning=f"Prior-year value for '{matched_label}' at {fact.month} {prior_year} is zero; yoy undefined.",
-                context_quote=fact.context_quote,
-                page_number=fact.page_number,
-            )
-
-        computed_yoy = round((curr_raw - prev_raw) / abs(prev_raw) * 100, 4)
-        delta = round(abs(fact.value - computed_yoy), 4)
-        is_match = delta <= MATCH_TOLERANCE
-
-        return FactVerificationResult(
-            metric_label=fact.metric_label,
-            matched_excel_label=matched_label,
-            matched_excel_source=src.label,
-            year=fact.year,
-            month=fact.month,
-            claim_type=fact.claim_type,
-            pdf_value=fact.value,
-            pdf_unit="persen_yoy",
-            excel_value=computed_yoy,
-            excel_unit="persen_yoy",
-            delta=delta,
-            verdict="Entailed" if is_match else "Refuted",
+    if prior_raw is None:
+        return _make_result(
+            fact, [current_period], matched_source, fact.claimed_value, "persen_yoy", None, "persen_yoy", None,
+            "Inconclusive",
             reasoning=(
-                f"PDF: {fact.value}% yoy | "
-                f"Excel [{src.label}] ({matched_label}): {computed_yoy}% yoy "
-                f"({curr_raw:.2f} vs {prev_raw:.2f} {src.table.unit}) | "
-                f"Δ = {delta}% → {'within' if is_match else 'exceeds'} tolerance {MATCH_TOLERANCE}%"
+                f"No data found in Excel [{matched_source}] for metric '{matched_label}' "
+                f"at {p.month} {prior_year} (needed for yoy denominator)."
             ),
-            context_quote=fact.context_quote,
-            page_number=fact.page_number,
+        )
+    if prior_raw == 0:
+        return _make_result(
+            fact, [current_period], matched_source, fact.claimed_value, "persen_yoy", None, "persen_yoy", None,
+            "Inconclusive",
+            reasoning=f"Prior-year value for '{matched_label}' at {p.month} {prior_year} is zero; yoy undefined.",
         )
 
-    # Not found in any source
-    return FactVerificationResult(
-        metric_label=fact.metric_label,
-        matched_excel_label=None,
-        matched_excel_source=None,
-        year=fact.year,
-        month=fact.month,
-        claim_type=fact.claim_type,
-        pdf_value=fact.value,
-        pdf_unit=fact.unit,
-        excel_value=None,
-        excel_unit="persen_yoy",
-        delta=None,
-        verdict="Inconclusive",
+    computed = round((curr_raw - prior_raw) / abs(prior_raw) * 100, 4)
+    delta, verdict = _numeric_verdict(fact.claimed_value, computed)
+    periods = [current_period, PeriodResult(metric_label=prior_label, year=prior_year, month=p.month, excel_value=round(prior_raw, 4))]
+    return _make_result(
+        fact, periods, matched_source, fact.claimed_value, "persen_yoy", computed, "persen_yoy", delta, verdict,
         reasoning=(
-            f"No data found in any Excel source for metric '{fact.metric_label}' "
-            f"at {fact.month} {fact.year} (needed for yoy numerator)."
+            f"PDF: {fact.claimed_value}% yoy | "
+            f"Excel [{matched_source}] ({matched_label}): {computed}% yoy "
+            f"({curr_raw:.2f} vs {prior_raw:.2f} {src.table.unit}) | "
+            f"Δ = {delta}% → {'within' if verdict == 'Entailed' else 'exceeds'} tolerance {MATCH_TOLERANCE}%"
         ),
-        context_quote=fact.context_quote,
-        page_number=fact.page_number,
     )
+
+
+def _compute_ratio(fact: ExtractedFact, resolved: List[Tuple[str, float]], src: _ExcelSource) -> FactVerificationResult:
+    (label_a, raw_a), (label_b, raw_b) = resolved
+    matched_source = src.label
+    p_a, p_b = fact.periods
+    periods = [
+        PeriodResult(metric_label=label_a, year=p_a.year, month=p_a.month, excel_value=round(raw_a, 4)),
+        PeriodResult(metric_label=label_b, year=p_b.year, month=p_b.month, excel_value=round(raw_b, 4)),
+    ]
+    if raw_b == 0:
+        return _make_result(
+            fact, periods, matched_source, fact.claimed_value, fact.unit, None, fact.unit, None, "Inconclusive",
+            reasoning=f"Nilai penyebut '{label_b}' bernilai nol; rasio tidak terdefinisi.",
+        )
+    computed = raw_a / raw_b
+    if fact.unit and "persen" in fact.unit.lower():
+        computed *= 100
+    computed = round(computed, 4)
+    delta, verdict = _numeric_verdict(fact.claimed_value, computed)
+    return _make_result(
+        fact, periods, matched_source, fact.claimed_value, fact.unit, computed, fact.unit, delta, verdict,
+        reasoning=(
+            f"PDF: rasio = {fact.claimed_value} {fact.unit} | "
+            f"Excel [{matched_source}]: {label_a}={round(raw_a, 4)} / {label_b}={round(raw_b, 4)} = {computed} {fact.unit} | "
+            f"Δ = {delta} → {'within' if verdict == 'Entailed' else 'exceeds'} tolerance {MATCH_TOLERANCE}"
+        ),
+    )
+
+
+def _compute_trend(fact: ExtractedFact, resolved: List[Tuple[str, float]], src: _ExcelSource) -> FactVerificationResult:
+    values = [raw for (_, raw) in resolved]
+    periods = _build_periods(fact.periods, resolved, values)
+    matched_source = src.label
+
+    if fact.operation == "is_increasing":
+        ok = all(values[i + 1] >= values[i] for i in range(len(values) - 1))
+    elif fact.operation == "is_decreasing":
+        ok = all(values[i + 1] <= values[i] for i in range(len(values) - 1))
+    else:  # is_stable
+        ok = all(abs(values[i + 1] - values[i]) <= MATCH_TOLERANCE for i in range(len(values) - 1))
+
+    verdict = "Entailed" if ok else "Refuted"
+    breakdown = ", ".join(f"{p.month} {p.year}={round(v, 4)}" for p, v in zip(fact.periods, values))
+    return _make_result(
+        fact, periods, matched_source, None, None, None, src.table.unit, None, verdict,
+        reasoning=(
+            f"Klaim tren '{fact.operation}' untuk '{fact.display_label}' | "
+            f"Excel [{matched_source}]: {breakdown} | "
+            f"{'sesuai' if ok else 'tidak sesuai'} dengan klaim"
+        ),
+    )
+
+
+def _compute_operation(
+    fact: ExtractedFact, resolved: List[Tuple[str, float]], factor: float, src: _ExcelSource
+) -> FactVerificationResult:
+    op = fact.operation
+    matched_source = src.label
+
+    if op == "value":
+        computed = round(resolved[0][1] / factor, 4)
+        periods = _build_periods(fact.periods, resolved, [resolved[0][1] / factor])
+        delta, verdict = _numeric_verdict(fact.claimed_value, computed)
+        return _make_result(
+            fact, periods, matched_source, fact.claimed_value, fact.unit, computed, fact.unit, delta, verdict,
+            reasoning=(
+                f"PDF: {fact.claimed_value} {fact.unit} | "
+                f"Excel [{matched_source}] ({resolved[0][0]}): {computed} {fact.unit} | "
+                f"Δ = {delta} → {'within' if verdict == 'Entailed' else 'exceeds'} tolerance {MATCH_TOLERANCE}"
+            ),
+        )
+
+    if op == "yoy_growth":
+        return _compute_yoy_growth(fact, resolved, src)
+
+    if op in ("average", "sum"):
+        converted = [raw / factor for (_, raw) in resolved]
+        computed = round(sum(converted) / len(converted), 4) if op == "average" else round(sum(converted), 4)
+        periods = _build_periods(fact.periods, resolved, converted)
+        delta, verdict = _numeric_verdict(fact.claimed_value, computed)
+        label = "rata-rata" if op == "average" else "total"
+        breakdown = ", ".join(f"{p.month} {p.year}={round(v, 4)}" for p, v in zip(fact.periods, converted))
+        return _make_result(
+            fact, periods, matched_source, fact.claimed_value, fact.unit, computed, fact.unit, delta, verdict,
+            reasoning=(
+                f"PDF: {label} = {fact.claimed_value} {fact.unit} | "
+                f"Excel [{matched_source}] ({label} dari {breakdown}) = {computed} {fact.unit} | "
+                f"Δ = {delta} → {'within' if verdict == 'Entailed' else 'exceeds'} tolerance {MATCH_TOLERANCE}"
+            ),
+        )
+
+    if op == "diff":
+        converted = [raw / factor for (_, raw) in resolved]
+        computed = round(converted[-1] - converted[0], 4)
+        periods = _build_periods(fact.periods, resolved, converted)
+        delta, verdict = _numeric_verdict(fact.claimed_value, computed)
+        return _make_result(
+            fact, periods, matched_source, fact.claimed_value, fact.unit, computed, fact.unit, delta, verdict,
+            reasoning=(
+                f"PDF: selisih = {fact.claimed_value} {fact.unit} | "
+                f"Excel [{matched_source}]: {round(converted[-1], 4)} - {round(converted[0], 4)} = {computed} {fact.unit} | "
+                f"Δ = {delta} → {'within' if verdict == 'Entailed' else 'exceeds'} tolerance {MATCH_TOLERANCE}"
+            ),
+        )
+
+    if op == "ratio":
+        return _compute_ratio(fact, resolved, src)
+
+    return _compute_trend(fact, resolved, src)  # is_increasing / is_decreasing / is_stable
+
+
+def _inconclusive_result(
+    fact: ExtractedFact, best_missing: Optional[List[PeriodPoint]], best_reason: Optional[str]
+) -> FactVerificationResult:
+    if best_reason:
+        reasoning = best_reason
+    elif best_missing:
+        missing_str = ", ".join(f"{p.metric_label} {p.month} {p.year}" for p in best_missing)
+        reasoning = f"Data tidak ditemukan di sumber Excel manapun untuk: {missing_str}."
+    else:
+        reasoning = f"Tidak ada sumber Excel yang cocok untuk operasi '{fact.operation}' pada '{fact.display_label}'."
+    return _make_result(
+        fact, [], None, fact.claimed_value, fact.unit, None, fact.unit, None, "Inconclusive", reasoning=reasoning,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Per-fact evaluation (multi-source): tries each source in order, first source with ALL
+# periods resolved AND a compatible unit (if the operation needs one) wins.
+# ---------------------------------------------------------------------------
+
+def _evaluate_fact(fact: ExtractedFact, sources: List[_ExcelSource]) -> FactVerificationResult:
+    needs_unit = fact.operation in _LEVEL_OPS
+    best_missing: Optional[List[PeriodPoint]] = None
+    best_reason: Optional[str] = None
+
+    for src in sources:
+        resolved, missing = _try_resolve(fact.periods, src)
+        if missing:
+            if best_missing is None or len(missing) < len(best_missing):
+                best_missing = missing
+            continue
+
+        factor = 1.0
+        if needs_unit:
+            factor = _unit_factor(fact.unit, src.table.unit)
+            if factor is None:
+                if best_reason is None:
+                    best_reason = (
+                        f"Unit conversion from '{fact.unit}' to '{src.table.unit}' "
+                        f"([{src.label}]) is not supported. Cannot compare."
+                    )
+                continue
+
+        return _compute_operation(fact, resolved, factor, src)
+
+    return _inconclusive_result(fact, best_missing, best_reason)
 
 
 # ---------------------------------------------------------------------------
@@ -284,11 +360,11 @@ def _compare_growth_yoy(
 # ---------------------------------------------------------------------------
 
 def _deduplicate_facts(facts: List[ExtractedFact]) -> List[ExtractedFact]:
-    """Remove duplicate (metric, year, month, claim_type) entries — keep first occurrence."""
+    """Remove duplicate (operation, periods) entries — keep first occurrence."""
     seen = set()
     unique = []
     for f in facts:
-        key = (f.metric_label, f.year, f.month, f.claim_type)
+        key = (f.operation, tuple((p.metric_label, p.year, p.month) for p in f.periods))
         if key not in seen:
             seen.add(key)
             unique.append(f)
@@ -296,7 +372,7 @@ def _deduplicate_facts(facts: List[ExtractedFact]) -> List[ExtractedFact]:
 
 
 async def verify_paired(
-    pdf_bytes: bytes,
+    narrative_text: str,
     excel_sources: List[Tuple[bytes, str, str]],
     llm: BaseChatModel,
     pdf_filename: str = "report.pdf",
@@ -305,15 +381,18 @@ async def verify_paired(
     """Verify all quantitative claims in a PDF narrative against one or more Excel statistical tables.
 
     Args:
-        pdf_bytes:      Raw bytes of the PDF report.
+        narrative_text: Already-extracted PDF narrative text (with [== Halaman N ==] page markers),
+                        e.g. from pdf_extraction.extract_narrative_text(). Extraction is the
+                        caller's responsibility so the same text can be reused for other checks
+                        (e.g. typo_checker.check_typos) without re-running the vision LLM fallback.
         excel_sources:  List of (excel_bytes, sheet_name, filename) tuples.
                         Claims are checked against each source in order; the first source
-                        that contains the metric label is used for the verdict.
+                        that contains every data point a claim references is used for the verdict.
         llm:            Fallback chat model (used when vision_llm is unavailable).
         pdf_filename:   Display name for the PDF (metadata only).
         vision_llm:     Vision-capable model (Gemini). When provided, used as the PRIMARY
-                        model for both PDF image extraction and structured fact extraction,
-                        since it handles Indonesian number formats more reliably than Groq.
+                        model for structured fact extraction, since it handles Indonesian
+                        number formats more reliably than Groq.
 
     Returns:
         PairedVerificationResponse with per-fact verdicts.
@@ -342,25 +421,7 @@ async def verify_paired(
                 all_row_labels.append(label)
                 seen_labels.add(label)
 
-    # Step 2: Extract PDF text — vision fallback when pypdf returns too little.
-    logger.info("Extracting text from PDF '%s'", pdf_filename)
-    narrative_text = extract_text_from_pdf(pdf_bytes)
-    content_chars = len(_PAGE_MARKER_RE.sub('', narrative_text).strip())
-    if content_chars < MIN_USEFUL_CHARS:
-        if vision_llm is None:
-            logger.warning(
-                "PDF content too short (%d chars excl. markers) and no vision_llm provided — "
-                "pass vision_llm=get_vision_llm() to enable the fallback.",
-                content_chars,
-            )
-        else:
-            logger.info(
-                "PDF content too short (%d chars excl. markers), falling back to vision extraction",
-                content_chars,
-            )
-            narrative_text = await extract_text_from_pdf_vision_async(pdf_bytes, vision_llm)
-
-    # Step 3: Extract structured facts.
+    # Step 2: Extract structured facts.
     logger.info("Running structured fact extraction (combined row labels from %d source(s))", len(parsed_sources))
     extraction_primary = vision_llm if vision_llm is not None else llm
     extraction_fallback = llm if vision_llm is not None else None
@@ -391,31 +452,8 @@ async def verify_paired(
             results=[],
         )
 
-    # Step 4: Direct comparison (no SQL) — each fact is checked across all sources
-    results: List[FactVerificationResult] = []
-    for fact in facts:
-        if fact.claim_type == "absolute":
-            result = _compare_absolute(fact, parsed_sources)
-        elif fact.claim_type == "growth_yoy":
-            result = _compare_growth_yoy(fact, parsed_sources)
-        else:
-            result = FactVerificationResult(
-                metric_label=fact.metric_label,
-                matched_excel_label=None,
-                matched_excel_source=None,
-                year=fact.year,
-                month=fact.month,
-                claim_type=fact.claim_type,
-                pdf_value=fact.value,
-                pdf_unit=fact.unit,
-                excel_value=None,
-                excel_unit=parsed_sources[0].table.unit if parsed_sources else "",
-                delta=None,
-                verdict="Inconclusive",
-                reasoning=f"Unknown claim_type '{fact.claim_type}'.",
-                context_quote=fact.context_quote,
-            )
-        results.append(result)
+    # Step 3: Direct comparison (no SQL) — each fact is checked across all sources
+    results: List[FactVerificationResult] = [_evaluate_fact(fact, parsed_sources) for fact in facts]
 
     entailed = sum(1 for r in results if r.verdict == "Entailed")
     refuted = sum(1 for r in results if r.verdict == "Refuted")

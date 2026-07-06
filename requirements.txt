@@ -12,6 +12,7 @@ SQLAlchemy>=2.0.0
 pypdf>=4.0.0
 python-multipart>=0.0.9
 openpyxl>=3.1.0
+phunspell>=0.1.6
 
 # Dev / test
 pytest>=8.0.0
