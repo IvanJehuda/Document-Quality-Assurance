@@ -201,6 +201,10 @@ _MONTH_ABBREVS = frozenset({
 # A token that is purely numeric (integer, decimal with comma/period, optional %).
 _NUMERIC_RE = re.compile(r'^-?[\d.,]+%?$')
 
+# A run of 4+ spaces between two non-space characters: the inter-column gap that
+# justified PDF tables leave behind. Real prose never has interior 4+ space gaps.
+_JUSTIFIED_GAP_RE = re.compile(r'\S {4,}\S')
+
 
 def _strip_tabular_content(text: str) -> str:
     """Remove tabular data rows from vision LLM output.
@@ -217,6 +221,13 @@ def _strip_tabular_content(text: str) -> str:
         stripped = line.strip()
         # Markdown table rows and separator rows
         if stripped.startswith('|'):
+            continue
+        # Justified table rows: the big inter-column gaps (4+ spaces) that pypdf
+        # reproduces never occur in real prose, and they come with words split
+        # apart ("Tagi han", "Akti va", "El ektroni k") that would otherwise flood
+        # the typo checker with bogus candidates. Checked on the stripped line so
+        # trailing/leading whitespace on a genuine sentence doesn't trip it.
+        if _JUSTIFIED_GAP_RE.search(stripped):
             continue
         # Non-pipe tabular data rows: predominantly numbers + month abbreviations
         tokens = stripped.split()

@@ -236,6 +236,20 @@ def _collect_candidates_and_deterministic_issues(
             continue
         if _SP.lookup(word):
             continue
+        # Extraction artifact, not a typo: a word split by a stray space ("k redit",
+        # "Tagi han", "Pemeri ntah"). If gluing this fragment onto a directly-adjacent
+        # neighbour (exactly one space between, nothing else) forms a real dictionary
+        # word, it's a broken word from PDF extraction - skip it silently rather than
+        # reporting the fragment as a misspelling.
+        prev = tokens[i - 1] if i > 0 else None
+        if (
+            prev is not None
+            and clean_text[prev.end():start] == " "
+            and _SP.lookup((prev.group() + word).lower())
+        ):
+            continue
+        if adjacent and between == " " and _SP.lookup((word + nxt.group()).lower()):
+            continue
         key = f"word:{word.lower()}"
         ctx_start = max(0, start - _CONTEXT_RADIUS)
         ctx_end = min(len(clean_text), end + _CONTEXT_RADIUS)
