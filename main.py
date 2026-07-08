@@ -199,15 +199,19 @@ async def api_login(
         return JSONResponse({"ok": False, "detail": "Invalid credentials"}, status_code=401)
 
     # Behind the host's TLS proxy the internal scheme is http, so trust the
-    # forwarded proto to decide whether the cookie may be marked Secure.
+    # forwarded proto to decide the cookie's Secure/SameSite attributes.
     is_https = request.headers.get("x-forwarded-proto", request.url.scheme) == "https"
+    # Hugging Face Spaces embeds the app in a cross-site <iframe>, so a SameSite=Lax
+    # cookie is withheld on subsequent /api/* requests (login "works" but the next
+    # call is 401). SameSite=None lets the cookie ride in that iframe, and it
+    # requires Secure. Over plain http (local dev) fall back to Lax without Secure.
     resp = JSONResponse({"ok": True})
     resp.set_cookie(
         SESSION_COOKIE,
         _issue_session(),
         max_age=SESSION_MAX_AGE,
         httponly=True,
-        samesite="lax",
+        samesite="none" if is_https else "lax",
         secure=is_https,
     )
     return resp
