@@ -143,6 +143,48 @@ class _Candidate:
     occurrences: List[_Occurrence] = field(default_factory=list)
 
 
+_MONTHS = frozenset({
+    "januari", "februari", "maret", "april", "mei", "juni", "juli", "agustus",
+    "september", "oktober", "november", "desember",
+    "jan", "feb", "mar", "apr", "jun", "jul", "ags", "agu", "agt", "sep", "sept",
+    "okt", "nov", "des",
+})
+
+
+def _joins_to_real_word(tokens, i: int, clean_text: str) -> bool:
+    """True when the token at index i is a fragment pypdf split off with a stray
+    space, i.e. gluing it with one or two directly-adjacent neighbours (exactly
+    one space between each) reforms a real dictionary word or a month name.
+
+    Handles 2-part splits ("k redit"->kredit, "M ei"->Mei) and 3-part splits
+    ("di terbi tkan"->diterbitkan). Any join that lands on a real word means the
+    fragment is an extraction artifact, not a misspelling.
+    """
+    def glued(a, b) -> bool:  # b directly follows a with exactly one space
+        return clean_text[a.end():b.start()] == " "
+
+    n = len(tokens)
+    left = i - 1 >= 0 and glued(tokens[i - 1], tokens[i])
+    right = i + 1 < n and glued(tokens[i], tokens[i + 1])
+    combos = []
+    if left:
+        combos.append((i - 1, i))
+        if i - 2 >= 0 and glued(tokens[i - 2], tokens[i - 1]):
+            combos.append((i - 2, i - 1, i))
+    if right:
+        combos.append((i, i + 1))
+        if i + 2 < n and glued(tokens[i + 1], tokens[i + 2]):
+            combos.append((i, i + 1, i + 2))
+    if left and right:  # fragment in the MIDDLE of a 3-part split ("di terbi tkan")
+        combos.append((i - 1, i, i + 1))
+
+    for combo in combos:
+        joined = "".join(tokens[j].group() for j in combo).lower()
+        if _SP.lookup(joined) or joined in _MONTHS:
+            return True
+    return False
+
+
 def _collect_candidates_and_deterministic_issues(
     clean_text: str,
     page_ranges: List[Tuple[int, int, Optional[int]]],
@@ -236,19 +278,15 @@ def _collect_candidates_and_deterministic_issues(
             continue
         if _SP.lookup(word):
             continue
-        # Extraction artifact, not a typo: a word split by a stray space ("k redit",
-        # "Tagi han", "Pemeri ntah"). If gluing this fragment onto a directly-adjacent
-        # neighbour (exactly one space between, nothing else) forms a real dictionary
-        # word, it's a broken word from PDF extraction - skip it silently rather than
-        # reporting the fragment as a misspelling.
-        prev = tokens[i - 1] if i > 0 else None
-        if (
-            prev is not None
-            and clean_text[prev.end():start] == " "
-            and _SP.lookup((prev.group() + word).lower())
-        ):
+        # A 2-letter lowercase token with no vowel ("lz" and other stray glyphs, or
+        # unit codes like "kg"/"km") is never a real Indonesian misspelling to flag.
+        if len(word) == 2 and word.isalpha() and not any(v in word for v in "aiueo"):
             continue
-        if adjacent and between == " " and _SP.lookup((word + nxt.group()).lower()):
+        # Extraction artifact, not a typo: pypdf split a word with a stray space
+        # ("k redit"->kredit, "Tagi han"->Tagihan, "M ei"->Mei, "di terbi tkan"->
+        # diterbitkan). If gluing this fragment with adjacent neighbours reforms a
+        # real dictionary word or month, skip it rather than flag the fragment.
+        if _joins_to_real_word(tokens, i, clean_text):
             continue
         key = f"word:{word.lower()}"
         ctx_start = max(0, start - _CONTEXT_RADIUS)
