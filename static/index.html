@@ -789,10 +789,6 @@ body.auth-locked .app {
       <span class="material-symbols-outlined">compare_arrows</span>
       <span class="nav-text">Verifikasi Berpasangan</span>
     </a>
-    <a class="nav-item inactive-nav" id="demo-nav-link" href="?demo=1" title="Lihat Contoh Tampilan Hasil">
-      <span class="material-symbols-outlined">visibility</span>
-      <span class="nav-text">Lihat Contoh Hasil</span>
-    </a>
     <!-- "Lihat Data" browses /api/tables (the ground-truth SQLite DB). That DB is
          not shipped to the deployment (only synthetic sample data), so the tab is
          hidden here. Uncomment to restore it for local development. -->
@@ -917,12 +913,10 @@ body.auth-locked .app {
 
 <script>
   const PANEL_TITLES = { paired: "Verifikasi Berpasangan", data: "Lihat Data" };
-  let isDemoMode = new URLSearchParams(location.search).get("demo") === "1";
 
   document.querySelectorAll(".nav-item[data-tab]").forEach((item) => {
     item.addEventListener("click", () => {
       const tab = item.dataset.tab;
-      if (tab === "paired" && isDemoMode) resetPairedPanel();
       document.querySelectorAll(".nav-item[data-tab]").forEach((n) => {
         n.classList.remove("active-nav");
         n.classList.add("inactive-nav");
@@ -1457,173 +1451,6 @@ body.auth-locked .app {
   document.getElementById("sidebar-toggle").addEventListener("click", () => {
     document.getElementById("sidebar").classList.toggle("collapsed");
   });
-
-  // ── Dummy preview (?demo=1) ──────────────────────────────────────────────
-  const DEMO_DATA = {
-    pdf_filename: "Contoh-Laporan-M2-Maret-2026.pdf",
-    excel_filenames: ["Contoh-Tabel1_1.xls"],
-    excel_sheets: ["I.1"],
-    excel_units: ["persen", "miliar Rp", "juta USD"],
-    total_facts: 8,
-    entailed_count: 5,
-    refuted_count: 2,
-    inconclusive_count: 1,
-    results: [
-      {
-        operation: "yoy_growth", metric_label: "Inflasi IHK (YoY)", matched_excel_source: "Contoh-Tabel1_1.xls / I.1",
-        periods: [
-          { metric_label: "Inflasi IHK (YoY)", year: 2026, month: "Mar", excel_value: 3.2 },
-          { metric_label: "Inflasi IHK (YoY)", year: 2025, month: "Mar", excel_value: 3.1 },
-        ],
-        claimed_value: 3.2, claimed_unit: "persen_yoy", computed_value: 3.2, computed_unit: "persen_yoy",
-        delta: 0.0, verdict: "Entailed",
-        reasoning: "Nilai pada PDF sesuai dengan data referensi.",
-        context_quote: "Inflasi IHK pada Maret 2026 tercatat sebesar 3,2% (yoy).", page_number: 2,
-      },
-      {
-        operation: "yoy_growth", metric_label: "Pertumbuhan Ekonomi (PDB)", matched_excel_source: "Contoh-Tabel1_1.xls / I.1",
-        periods: [
-          { metric_label: "Pertumbuhan Ekonomi (PDB)", year: 2026, month: "Mar", excel_value: 105.0 },
-          { metric_label: "Pertumbuhan Ekonomi (PDB)", year: 2025, month: "Mar", excel_value: 100.2 },
-        ],
-        claimed_value: 5.1, claimed_unit: "persen_yoy", computed_value: 4.8, computed_unit: "persen_yoy",
-        delta: 0.3, verdict: "Refuted",
-        reasoning: "Nilai pada PDF (5,1%) tidak sesuai dengan data referensi (4,8%).",
-        context_quote: "Pertumbuhan ekonomi triwulan I 2026 mencapai 5,1% (yoy).", page_number: 3,
-      },
-      {
-        operation: "value", metric_label: "Nilai Tukar Rupiah", matched_excel_source: "Contoh-Tabel1_1.xls / I.1",
-        periods: [{ metric_label: "Nilai Tukar Rupiah", year: 2026, month: "Mar", excel_value: 15750 }],
-        claimed_value: 15750, claimed_unit: "Rp/USD", computed_value: 15750, computed_unit: "Rp/USD",
-        delta: 0.0, verdict: "Entailed",
-        reasoning: "Nilai pada PDF sesuai dengan data referensi.",
-        context_quote: "Nilai tukar rupiah rata-rata Maret 2026 berada pada level Rp15.750 per USD.", page_number: 4,
-      },
-      {
-        operation: "value", metric_label: "Cadangan Devisa", matched_excel_source: "Contoh-Tabel1_1.xls / I.1",
-        periods: [{ metric_label: "Cadangan Devisa", year: 2026, month: "Mar", excel_value: 148.9 }],
-        claimed_value: 152.3, claimed_unit: "miliar USD", computed_value: 148.9, computed_unit: "miliar USD",
-        delta: 3.4, verdict: "Refuted",
-        reasoning: "Nilai pada PDF (152,3 miliar USD) tidak sesuai dengan data referensi (148,9 miliar USD).",
-        context_quote: "Posisi cadangan devisa akhir Maret 2026 sebesar USD152,3 miliar.", page_number: 5,
-      },
-      {
-        operation: "value", metric_label: "Suku Bunga Acuan BI7DRR", matched_excel_source: "Contoh-Tabel1_1.xls / I.1",
-        periods: [{ metric_label: "Suku Bunga Acuan BI7DRR", year: 2026, month: "Mar", excel_value: 5.75 }],
-        claimed_value: 5.75, claimed_unit: "persen", computed_value: 5.75, computed_unit: "persen",
-        delta: 0.0, verdict: "Entailed",
-        reasoning: "Nilai pada PDF sesuai dengan data referensi.",
-        context_quote: "BI mempertahankan suku bunga acuan BI7DRR pada level 5,75%.", page_number: 6,
-      },
-      {
-        operation: "yoy_growth", metric_label: "Pertumbuhan Kredit Perbankan", matched_excel_source: null,
-        periods: [],
-        claimed_value: 9.4, claimed_unit: "persen_yoy", computed_value: null, computed_unit: "persen_yoy",
-        delta: null, verdict: "Inconclusive",
-        reasoning: "Data referensi untuk metrik ini tidak ditemukan pada tabel Excel yang diunggah.",
-        context_quote: "Pertumbuhan kredit perbankan tercatat 9,4% (yoy) pada Maret 2026.", page_number: 7,
-      },
-      {
-        operation: "average", metric_label: "Penyaluran Kredit", matched_excel_source: "Contoh-Tabel1_1.xls / I.1",
-        periods: [
-          { metric_label: "Penyaluran Kredit", year: 2026, month: "Jan", excel_value: 7100.2 },
-          { metric_label: "Penyaluran Kredit", year: 2026, month: "Feb", excel_value: 7150.8 },
-          { metric_label: "Penyaluran Kredit", year: 2026, month: "Mar", excel_value: 7205.4 },
-          { metric_label: "Penyaluran Kredit", year: 2026, month: "Apr", excel_value: 7260.6 },
-        ],
-        claimed_value: 7179.3, claimed_unit: "triliun Rp", computed_value: 7179.25, computed_unit: "triliun Rp",
-        delta: 0.05, verdict: "Entailed",
-        reasoning: "Rata-rata Januari-April pada PDF sesuai dengan rata-rata data referensi.",
-        context_quote: "Rata-rata penyaluran kredit perbankan Januari-April 2026 sebesar Rp7.179,3 triliun.", page_number: 8,
-      },
-      {
-        operation: "is_increasing", metric_label: "Penyaluran Kredit", matched_excel_source: "Contoh-Tabel1_1.xls / I.1",
-        periods: [
-          { metric_label: "Penyaluran Kredit", year: 2026, month: "Jan", excel_value: 7100.2 },
-          { metric_label: "Penyaluran Kredit", year: 2026, month: "Feb", excel_value: 7150.8 },
-          { metric_label: "Penyaluran Kredit", year: 2026, month: "Mar", excel_value: 7205.4 },
-          { metric_label: "Penyaluran Kredit", year: 2026, month: "Apr", excel_value: 7260.6 },
-        ],
-        claimed_value: null, claimed_unit: null, computed_value: null, computed_unit: "triliun Rp",
-        delta: null, verdict: "Entailed",
-        reasoning: "Tren naik konsisten Januari-April sesuai dengan data referensi.",
-        context_quote: "Penyaluran kredit perbankan terus meningkat dari Januari hingga April 2026.", page_number: 8,
-      },
-    ],
-    typo_check: {
-      total_issues: 3,
-      ejaan_count: 1,
-      tidak_baku_count: 1,
-      grammar_count: 1,
-      summary: "Ditemukan 3 isu: 1 ejaan, 1 kata tidak baku, 1 tata bahasa.",
-      issues: [
-        {
-          word: "aktifitas", start: 120, end: 129, category: "tidak_baku",
-          suggestion: "aktivitas", explanation: "'aktifitas' adalah bentuk tidak baku; bentuk baku: 'aktivitas'.",
-          page_number: 2,
-        },
-        {
-          word: "ekonimi", start: 340, end: 347, category: "ejaan",
-          suggestion: "ekonomi", explanation: "Kata ini tidak ditemukan di kamus dan kemungkinan salah eja.",
-          page_number: 3,
-        },
-        {
-          word: "di catat", start: 512, end: 520, category: "grammar",
-          suggestion: "dicatat", explanation: "'catat' berperan sebagai kata kerja pasif, seharusnya ditulis serangkai dengan awalan 'di-'.",
-          page_number: 4,
-        },
-      ],
-    },
-  };
-
-  function loadDemo() {
-    setFilenameText(document.getElementById("paired-pdf-filename"), DEMO_DATA.pdf_filename);
-    const firstExcelFn = document.querySelector("#excel-sources-container .dz-sub");
-    if (firstExcelFn) setFilenameText(firstExcelFn, DEMO_DATA.excel_filenames[0]);
-    const resultEl = document.getElementById("paired-result");
-    resultEl.innerHTML = renderPairedResponse(DEMO_DATA);
-    document.getElementById("paired-container").classList.add("has-results");
-    document.getElementById("panel-paired").classList.add("has-results");
-    attachPairedHandlers(resultEl);
-  }
-
-  function enterDemoMode() {
-    isDemoMode = true;
-    history.pushState(null, "", "?demo=1");
-    document.querySelectorAll(".nav-item[data-tab]").forEach((n) => {
-      n.classList.toggle("active-nav", n.dataset.tab === "paired");
-      n.classList.toggle("inactive-nav", n.dataset.tab !== "paired");
-    });
-    document.querySelectorAll(".panel").forEach((p) => p.classList.remove("active"));
-    document.getElementById("panel-paired").classList.add("active");
-    document.getElementById("header-title").textContent = PANEL_TITLES.paired;
-    loadDemo();
-  }
-
-  function resetPairedPanel() {
-    document.getElementById("paired-pdf").value = "";
-    setFilenameText(document.getElementById("paired-pdf-filename"), "Pilih file PDF");
-
-    document.getElementById("excel-sources-container").innerHTML = "";
-    excelSources = [];
-    addExcelSource();
-
-    document.getElementById("paired-result").innerHTML = "";
-    document.getElementById("paired-container").classList.remove("has-results");
-    document.getElementById("panel-paired").classList.remove("has-results");
-
-    isDemoMode = false;
-    history.replaceState(null, "", location.pathname + location.hash);
-  }
-
-  document.getElementById("demo-nav-link").addEventListener("click", (e) => {
-    e.preventDefault();
-    enterDemoMode();
-  });
-
-  if (isDemoMode) {
-    loadDemo();
-  }
 
   // ══ Login gate ══════════════════════════════════════════════════════
   // The app shell renders blurred behind #auth-gate. We ask the server
