@@ -20,8 +20,9 @@ import asyncio
 import base64
 import io
 import logging
+import os
 import re
-from typing import Optional
+from typing import List, Optional
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage
@@ -31,6 +32,14 @@ logger = logging.getLogger("fact-checker")
 
 # pypdf result shorter than this is treated as "extraction failed" and triggers the vision fallback.
 MIN_USEFUL_CHARS = 200
+
+# How many PDF pages to send per vision LLM call. Batching cuts the number of requests, which
+# is what matters when the provider throttles by requests-per-minute rather than by tokens:
+# Gemini's free tier caps gemini-2.5-flash at ~5 requests/minute, so 10 per-page calls need
+# several rate-limit windows (~2 min), whereas 3 pages/call fits 10 pages into ~4 calls (one
+# window). 0/unset = per-provider auto: Gemini batches; Groq (throttled by tokens-per-minute,
+# where more images per call blows the budget faster) and local/other providers stay 1/call.
+_VISION_PAGES_PER_CALL_ENV = int(os.getenv("VISION_PAGES_PER_CALL", "0"))
 
 # Marks the start of each page's text in extract_text_from_pdf's/vision's output.
 # Shared across modules that need to strip markers or attribute a char offset to a page.
@@ -185,11 +194,72 @@ If the page has no text at all (only images or blank areas), output nothing.
 """
 
 
+# Appended when several pages are sent in one call, so the model separates each page's text
+# with its own marker. Images are handed over each preceded by their [== Halaman N ==] marker.
+_MULTIPAGE_SUFFIX_ID = """\
+
+CATATAN MULTI-HALAMAN:
+- Kamu menerima BEBERAPA halaman sekaligus; setiap gambar didahului baris penanda [== Halaman N ==].
+- Untuk SETIAP halaman, tulis ulang baris penanda [== Halaman N ==] (dengan nomor N yang sama persis),
+  lalu teks narasi halaman itu di bawahnya.
+- Proses semua halaman sesuai urutan; jangan lewati satu halaman pun.
+"""
+
+_MULTIPAGE_SUFFIX_EN = """\
+
+MULTI-PAGE NOTE:
+- You are given SEVERAL pages at once; each image is preceded by a [== Halaman N ==] marker line.
+- For EACH page, repeat its [== Halaman N ==] marker line (same number), then that page's text below it.
+- Process every page in order; do not skip any page.
+"""
+
+
 def _get_page_prompt(vision_llm: BaseChatModel) -> str:
     """Select extraction prompt based on the vision LLM class."""
     if "Groq" in type(vision_llm).__name__:
         return _VISION_PROMPT_SIMPLE
     return _VISION_PROMPT_SINGLE_PAGE
+
+
+def _get_batch_prompt(vision_llm: BaseChatModel, multi: bool) -> str:
+    """Extraction prompt, with the multi-page marker instruction appended when batching."""
+    base = _get_page_prompt(vision_llm)
+    if not multi:
+        return base
+    suffix = _MULTIPAGE_SUFFIX_EN if "Groq" in type(vision_llm).__name__ else _MULTIPAGE_SUFFIX_ID
+    return base + suffix
+
+
+def _renumber_markers(text: str, page_nums: List[int]) -> str:
+    """Attach the correct [== Halaman N ==] markers to a (possibly multi-page) vision response.
+
+    Images are always sent in page order, so page attribution follows marker order, not the
+    number the model happened to print. When the model emitted exactly one marker per expected
+    page, each marker is rewritten to the expected page number by position. Otherwise the
+    segmentation is unreliable: the batch's text is attributed to its first page (so no text is
+    lost) and the remaining pages are appended as empty markers to keep the page set complete.
+    """
+    markers = list(PAGE_MARKER_RE.finditer(text))
+    if len(markers) == len(page_nums):
+        out: List[str] = []
+        last = 0
+        for m, n in zip(markers, page_nums):
+            out.append(text[last:m.start()])
+            out.append(f"[== Halaman {n} ==]")
+            last = m.end()
+        out.append(text[last:])
+        return "".join(out)
+
+    body = PAGE_MARKER_RE.sub("", text).strip()
+    if not body:
+        return "\n".join(f"[== Halaman {n} ==]" for n in page_nums)
+    if len(page_nums) > 1:
+        logger.warning(
+            "Vision batch %s returned %d marker(s) (expected %d); attributing text to page %d",
+            page_nums, len(markers), len(page_nums), page_nums[0],
+        )
+    extra = "".join(f"\n[== Halaman {n} ==]" for n in page_nums[1:])
+    return f"[== Halaman {page_nums[0]} ==]\n{body}{extra}"
 
 
 # Indonesian and English month abbreviations used in BI statistical tables.
@@ -268,33 +338,58 @@ def _render_pages_to_b64(file_bytes: bytes, dpi: int) -> list[str]:
     return result
 
 
+def _plan_pages_per_call(is_groq: bool, is_gemini: bool) -> int:
+    """How many pages to batch per vision call for this provider (env override wins).
+
+    Batching only helps a request-per-minute cap (Gemini free tier), so only Gemini batches by
+    default. Groq is throttled by tokens-per-minute — more images per call blows that budget
+    faster, not slower — and local/other providers already parallelize freely, so both stay 1.
+    """
+    if _VISION_PAGES_PER_CALL_ENV > 0:
+        return _VISION_PAGES_PER_CALL_ENV
+    return 3 if is_gemini else 1
+
+
 async def extract_text_from_pdf_vision_async(
     file_bytes: bytes,
     vision_llm: BaseChatModel,
     dpi: int = 150,
 ) -> str:
-    """Async, per-page vision extraction — each page is a separate parallel LLM call.
+    """Async vision extraction — pages are batched into as few LLM calls as the provider allows.
 
-    Fires one ainvoke per page and gathers them concurrently, giving O(1 page) wall-clock
-    time regardless of document length.  The extraction prompt is chosen per-provider:
-    Gemini gets a selective narrative-only prompt (it follows it reliably); Groq gets a
-    simple "copy everything" prompt and tabular rows are stripped deterministically in
-    _strip_tabular_content() instead.
+    Pages are grouped into batches (see _plan_pages_per_call) and each batch is one ainvoke;
+    batches are gathered concurrently. Fewer, larger calls beat many small ones under a
+    requests-per-minute cap (Gemini free tier: 5 rpm), while token-throttled Groq and local
+    providers keep one page per call. The extraction prompt is chosen per-provider: Gemini gets
+    a selective narrative-only prompt (it follows it reliably); Groq gets a simple "copy
+    everything" prompt and tabular rows are stripped deterministically in _strip_tabular_content.
 
-    Both free-tier providers throttle per request, not just per token: Groq's account-wide
-    TPM budget is easily blown by a handful of image-heavy calls, and Gemini's free tier caps
-    gemini-2.5-flash at 5 requests/minute — a 9-page document sent "in parallel" instantly
-    exceeds both. A semaphore caps concurrency per provider and failed calls are retried with
+    Both free-tier providers throttle at the request level: Groq's account-wide TPM budget is
+    easily blown by image-heavy calls, and Gemini's free tier caps gemini-2.5-flash at 5
+    requests/minute. A semaphore caps concurrency per provider and failed calls are retried with
     backoff parsed from the provider's own suggested wait time when a rate-limit error is hit.
     """
-    logger.info("Rendering PDF pages at %d DPI for vision extraction (async per-page)", dpi)
+    logger.info("Rendering PDF pages at %d DPI for vision extraction (async, batched)", dpi)
     b64_pages = await asyncio.to_thread(_render_pages_to_b64, file_bytes, dpi)
-    logger.info("Rendered %d pages, sending to vision LLM in parallel", len(b64_pages))
+    n_pages = len(b64_pages)
 
-    prompt = _get_page_prompt(vision_llm)
     provider_name = type(vision_llm).__name__
     is_groq = "Groq" in provider_name
     is_gemini = "Google" in provider_name
+
+    pages_per_call = _plan_pages_per_call(is_groq, is_gemini)
+    prompt = _get_batch_prompt(vision_llm, multi=pages_per_call > 1)
+
+    # Batches of 0-based page indices, in order.
+    batches = [
+        list(range(i, min(i + pages_per_call, n_pages)))
+        for i in range(0, n_pages, pages_per_call)
+    ]
+    logger.info(
+        "Rendered %d page(s); sending as %d vision call(s) (%d page(s)/call)",
+        n_pages, len(batches), pages_per_call,
+    )
+
     # Groq: ~7-10k tokens/page against a 30k TPM account-wide budget -> serialize (semaphore=1).
     # Gemini free tier: hard cap of 5 requests/minute for gemini-2.5-flash -> cap at 4 concurrent
     # to leave headroom. Other providers (e.g. local Ollama) are assumed unthrottled.
@@ -305,7 +400,7 @@ async def extract_text_from_pdf_vision_async(
         semaphore = asyncio.Semaphore(4)
         max_retries = 6
     else:
-        semaphore = asyncio.Semaphore(len(b64_pages) + 1)
+        semaphore = asyncio.Semaphore(len(batches) + 1)
         max_retries = 1
 
     # Groq says "Please try again in 9.08s"; Gemini says "Please retry in 51.95s".
@@ -323,40 +418,51 @@ async def extract_text_from_pdf_vision_async(
         err = str(exc).lower()
         return any(kw in err for kw in ("rate", "429", "too many", "quota"))
 
-    async def _extract_page(page_num: int, b64: str) -> str:
-        image_part = {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64}"}}
+    def _empty_markers(page_nums: List[int]) -> str:
+        return "\n".join(f"[== Halaman {n} ==]" for n in page_nums)
+
+    async def _extract_batch(idxs: List[int]) -> str:
+        page_nums = [i + 1 for i in idxs]
+        # Single page: just the image (unchanged behaviour). Multi page: precede each image with
+        # its marker so the model can echo them back and keep the pages separable.
+        content: list = []
+        if len(idxs) == 1:
+            content.append(
+                {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64_pages[idxs[0]]}"}}
+            )
+        else:
+            for i in idxs:
+                content.append({"type": "text", "text": f"[== Halaman {i + 1} ==]"})
+                content.append(
+                    {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64_pages[i]}"}}
+                )
+        content.append({"type": "text", "text": prompt})
+
         retry_wait = 0.0
         for attempt in range(max_retries):
             if attempt > 0:
                 await asyncio.sleep(retry_wait)
             async with semaphore:
                 try:
-                    msg = HumanMessage(content=[image_part, {"type": "text", "text": prompt}])
-                    response = await vision_llm.ainvoke([msg])
+                    response = await vision_llm.ainvoke([HumanMessage(content=content)])
                     text = response.content if isinstance(response.content, str) else ""
                     text = _strip_tabular_content(text)
-                    return (
-                        f"[== Halaman {page_num} ==]\n{text}"
-                        if text.strip()
-                        else f"[== Halaman {page_num} ==]"
-                    )
+                    return _renumber_markers(text, page_nums)
                 except Exception as exc:
                     if _is_rate_limit(exc) and attempt < max_retries - 1:
                         retry_wait = _parse_retry_after(str(exc), fallback=(attempt + 1) * 10)
                         logger.warning(
-                            "Rate limit on page %d (attempt %d/%d), retrying in %.1fs",
-                            page_num, attempt + 1, max_retries, retry_wait,
+                            "Rate limit on pages %s (attempt %d/%d), retrying in %.1fs",
+                            page_nums, attempt + 1, max_retries, retry_wait,
                         )
                     else:
-                        logger.exception("Vision extraction failed for page %d", page_num)
-                        return f"[== Halaman {page_num} ==]"
-        logger.error("Vision extraction gave up on page %d after %d retries", page_num, max_retries)
-        return f"[== Halaman {page_num} ==]"
+                        logger.exception("Vision extraction failed for pages %s", page_nums)
+                        return _empty_markers(page_nums)
+        logger.error("Vision extraction gave up on pages %s after %d retries", page_nums, max_retries)
+        return _empty_markers(page_nums)
 
-    page_texts = await asyncio.gather(
-        *[_extract_page(i + 1, b64) for i, b64 in enumerate(b64_pages)]
-    )
-    combined = "\n\n".join(t for t in page_texts if t.strip())
+    batch_texts = await asyncio.gather(*[_extract_batch(idxs) for idxs in batches])
+    combined = "\n\n".join(t for t in batch_texts if t.strip())
     logger.info("Async vision extraction returned %d chars total", len(combined))
     return combined
 
