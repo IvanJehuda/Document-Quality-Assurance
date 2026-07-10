@@ -428,19 +428,25 @@ async def verify_paired_endpoint(
         # consumer would double its cost and rate-limit exposure for no benefit.
         narrative_text = await extract_narrative_text(pdf_bytes, vision_llm)
 
-        fact_result = await verify_paired(
-            narrative_text=narrative_text,
-            excel_sources=excel_sources,
-            llm=get_llm(temperature=0.0),
-            pdf_filename=pdf_file.filename or "report.pdf",
-            vision_llm=vision_llm,
-        )
         # Prefer Gemini for the typo/grammar escalation call when available - it judges
         # domain jargon (e.g. "kartal", "inflasi") more reliably than the Groq text model,
         # which was observed hallucinating a false-positive correction for "kartal" during
         # real-document testing.
         typo_llm = vision_llm if vision_llm is not None else get_llm(temperature=0.0)
-        typo_result = await asyncio.to_thread(check_typos, narrative_text, typo_llm)
+
+        # Fact verification and the typo/grammar check both only depend on narrative_text,
+        # so run them concurrently to overlap their LLM round-trips instead of waiting for
+        # the whole fact check to finish before the (single-call) typo pass even starts.
+        fact_result, typo_result = await asyncio.gather(
+            verify_paired(
+                narrative_text=narrative_text,
+                excel_sources=excel_sources,
+                llm=get_llm(temperature=0.0),
+                pdf_filename=pdf_file.filename or "report.pdf",
+                vision_llm=vision_llm,
+            ),
+            asyncio.to_thread(check_typos, narrative_text, typo_llm),
+        )
         return fact_result.model_copy(update={"typo_check": typo_result})
     except Exception as exc:
         logger.exception("Paired verification failed")
