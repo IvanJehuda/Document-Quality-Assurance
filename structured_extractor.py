@@ -284,6 +284,10 @@ def _parse_indonesian_number(raw: str) -> Optional[float]:
     s = re.sub(r'^Rp\s*', '', s, flags=re.IGNORECASE)
     s = re.sub(r'\s*(triliun|miliar|persen|%)[^\d]*$', '', s, flags=re.IGNORECASE)
     s = s.strip().rstrip('*').strip()
+    # Remove any spaces still sitting inside the number. Indonesian numerals never contain a
+    # space, so an interior space is a PDF-extraction artifact (e.g. "2 1,3" -> "21,3", "8 ,9"
+    # -> "8,9"); left in, it made float() raise and the whole fact was dropped.
+    s = re.sub(r'\s+', '', s)
 
     try:
         if ',' in s:

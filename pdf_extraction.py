@@ -1,19 +1,25 @@
 """Text extraction from PDFs.
 
 Two strategies:
-  1. extract_text_from_pdf      — fast path: pypdf text-layer extraction (no LLM, no cost).
-                                   Works for digital PDFs with a real text layer.
+  1. extract_text_from_pdf      — fast path: text-layer extraction via pypdfium2 (no LLM, no
+                                   cost). Works for digital PDFs with a real text layer.
   2. extract_text_from_pdf_vision — fallback: render pages to images via pypdfium2, then ask
                                    a vision-capable LLM to read out the narrative text only.
                                    Used when the PDF has text stored as vector paths (outlined
-                                   fonts) so pypdf returns empty or near-empty output.
+                                   fonts) so the text layer is empty or near-empty.
 
-extract_narrative_text() combines both: tries pypdf first, falls back to the async vision
-path automatically when the extracted text is below a minimum useful length. Callers that need
-the narrative text for more than one downstream step (e.g. paired_verifier.py's fact-checking
+extract_narrative_text() combines both: tries the text layer first, falls back to the async
+vision path automatically when the extracted text is below a minimum useful length. Callers that
+need the narrative text for more than one downstream step (e.g. paired_verifier.py's fact-checking
 AND typo_checker.py's spelling/grammar check) should call this once and reuse the result, rather
 than re-extracting per consumer — the vision fallback is an LLM call and re-running it doubles
 cost and rate-limit exposure for no benefit.
+
+Text-layer extraction uses pypdfium2 (PDFium, Chromium's PDF engine), NOT pypdf: pypdf inserts
+phantom spaces at text-run boundaries in some PDFs — splitting words ("bershih"→"bers hih") and
+numbers ("21,3%"→"2 1,3%"). Those splits both flooded the typo checker with bogus fragments and
+made structured_extractor drop facts whose value string ("2 1,3") could not be parsed. PDFium
+reconstructs word/number boundaries reliably on the same files.
 """
 
 import asyncio
@@ -26,11 +32,10 @@ from typing import List, Optional
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage
-from pypdf import PdfReader
 
 logger = logging.getLogger("fact-checker")
 
-# pypdf result shorter than this is treated as "extraction failed" and triggers the vision fallback.
+# Text-layer result shorter than this is treated as "extraction failed" and triggers the vision fallback.
 MIN_USEFUL_CHARS = 200
 
 # How many PDF pages to send per vision LLM call. Batching cuts the number of requests, which
@@ -70,19 +75,40 @@ FORMAT OUTPUT:
 """
 
 
+def _extract_pages_raw(file_bytes: bytes) -> List[str]:
+    """Return the raw text of each page via pypdfium2 (PDFium's text layer).
+
+    Separated out as the single seam over the PDF engine so extract_text_from_pdf stays pure
+    string-shaping (and is trivially testable). PDFium is used instead of pypdf because pypdf
+    over-inserts spaces at text-run boundaries (see module docstring). Lets PDFium's own errors
+    propagate for corrupt/non-PDF input.
+    """
+    import pypdfium2 as pdfium
+
+    doc = pdfium.PdfDocument(file_bytes)
+    try:
+        pages: List[str] = []
+        for i in range(len(doc)):
+            page = doc[i]
+            textpage = page.get_textpage()
+            pages.append((textpage.get_text_range() or "").replace("\r\n", "\n"))
+            textpage.close()
+            page.close()
+        return pages
+    finally:
+        doc.close()
+
+
 def extract_text_from_pdf(file_bytes: bytes) -> str:
-    """Extract and concatenate text from every page of a PDF via pypdf.
+    """Extract and concatenate the text layer of every page of a PDF (via pypdfium2).
 
     Each page is prefixed with a [== Halaman N ==] marker so downstream
     components (structured extractor) can attribute facts to specific pages.
     Returns the concatenated text (may be empty/short for text-as-paths PDFs).
-    Lets pypdf's own parsing errors propagate for corrupt/non-PDF input.
     """
-    reader = PdfReader(io.BytesIO(file_bytes))
     parts = []
-    for i, page in enumerate(reader.pages, start=1):
-        text = page.extract_text() or ""
-        if text.strip():
+    for i, text in enumerate(_extract_pages_raw(file_bytes), start=1):
+        if text and text.strip():
             parts.append(f"[== Halaman {i} ==]\n{text}")
     return "\n\n".join(parts)
 
@@ -95,7 +121,13 @@ def _count_total_pages(file_bytes: bytes) -> int:
     on 2 of 10 pages) - that case needs the vision fallback just as much as a uniformly
     short document does, but a pure char-count check over the whole document can't see it.
     """
-    return len(PdfReader(io.BytesIO(file_bytes)).pages)
+    import pypdfium2 as pdfium
+
+    doc = pdfium.PdfDocument(file_bytes)
+    try:
+        return len(doc)
+    finally:
+        doc.close()
 
 
 def extract_text_from_pdf_vision(
@@ -468,7 +500,7 @@ async def extract_text_from_pdf_vision_async(
 
 
 async def extract_narrative_text(file_bytes: bytes, vision_llm: Optional[BaseChatModel] = None) -> str:
-    """Extract a PDF's narrative text, falling back to vision extraction when pypdf's output is too short.
+    """Extract a PDF's narrative text, falling back to vision extraction when the text layer is too short.
 
     Single entry point for any caller that needs the full narrative text (with page markers) —
     call this once and share the result across multiple downstream consumers instead of extracting
@@ -480,7 +512,7 @@ async def extract_narrative_text(file_bytes: bytes, vision_llm: Optional[BaseCha
 
     # A document can clear MIN_USEFUL_CHARS in aggregate while still being almost entirely
     # image/chart pages - only checked when the char count alone looks fine, so fake/short
-    # bytes in the too-short branch never reach a second real PdfReader parse.
+    # bytes in the too-short branch never reach a second real PDF parse.
     mostly_blank_pages = False
     if not too_short:
         pages_with_text = len(PAGE_MARKER_RE.findall(text))
@@ -502,9 +534,8 @@ async def extract_narrative_text(file_bytes: bytes, vision_llm: Optional[BaseCha
             )
             text = await extract_text_from_pdf_vision_async(file_bytes, vision_llm)
     else:
-        # pypdf faithfully reproduces the wide inter-character spacing PDF generators use to
-        # justify table columns (e.g. "Uang El ektroni k"), which fragments words and floods
-        # downstream consumers like typo_checker with bogus candidates. The vision path already
-        # runs this per-page (see extract_text_from_pdf_vision_async); the pypdf path needs it too.
+        # Statistical-table rows still leak into the text layer; strip them so the typo checker
+        # and structured extractor only see prose. The vision path already runs this per-page
+        # (see extract_text_from_pdf_vision_async); the text-layer path needs it too.
         text = _strip_tabular_content(text)
     return text

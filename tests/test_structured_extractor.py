@@ -84,6 +84,17 @@ def test_parse_indonesian_number_strips_rp_prefix_and_unit_suffix():
     assert _parse_indonesian_number("Rp10.355,1 triliun") == pytest.approx(10355.1)
 
 
+@pytest.mark.parametrize(
+    "raw,expected",
+    [("2 1,3", 21.3), ("1 3,6", 13.6), ("1 0,8", 10.8), ("8 ,9", 8.9)],
+)
+def test_parse_indonesian_number_recovers_from_phantom_spaces(raw, expected):
+    # PDF text extraction can inject spaces inside a number ("21,3" -> "2 1,3"); those must be
+    # removed rather than dropping the whole fact. (Primary fix is pypdfium2 extraction, this is
+    # the safety net.)
+    assert _parse_indonesian_number(raw) == pytest.approx(expected)
+
+
 def test_parse_indonesian_number_returns_none_for_unparseable_string():
     assert _parse_indonesian_number("abc") is None
 
