@@ -487,7 +487,10 @@ async def get_table_data_endpoint(table_name: str, limit: int = 200, offset: int
     )
 
 
-@app.get("/health")
+# Accept HEAD as well as GET: uptime pingers (e.g. UptimeRobot's free tier) probe with HEAD,
+# and a GET-only route answers HEAD with 405, which flags a false "down" incident even though
+# the request still reaches the server.
+@app.api_route("/health", methods=["GET", "HEAD"])
 async def health() -> dict:
     return {"status": "ok", "database_exists": DB_PATH.exists()}
 

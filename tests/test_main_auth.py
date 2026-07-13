@@ -98,6 +98,13 @@ def test_health_stays_open_when_auth_enabled(monkeypatch):
     assert _client().get("/health").status_code == 200
 
 
+def test_health_accepts_head_for_uptime_pingers():
+    # UptimeRobot's free tier probes with HEAD; a GET-only route would 405 and flag a
+    # false "down". HEAD must return 200 (empty body) like GET.
+    resp = _client().head("/health")
+    assert resp.status_code == 200
+
+
 def test_session_cookie_is_samesite_none_secure_over_https(monkeypatch):
     """Over HTTPS (e.g. Hugging Face's cross-site iframe) the cookie must be
     SameSite=None; Secure, otherwise it is withheld on later /api/* calls and
