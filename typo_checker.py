@@ -293,13 +293,18 @@ def _collect_candidates_and_deterministic_issues(
         ctx_end = min(len(clean_text), end + _CONTEXT_RADIUS)
         cand = candidates_by_key.get(key)
         if cand is None:
-            suggestions = list(_SP.suggest(word))[:3]
+            # Deliberately NO _SP.suggest() here: spylls' suggest pipeline costs ~0.5-1s of
+            # pure-Python CPU per word (minutes of wall-clock for a dozen candidates on a
+            # small cloud instance), and its Indonesian hints are mostly noise that misleads
+            # the LLM more than it helps ('yoy' -> 'yoyo', 'masing' -> 'asing', and
+            # 'kartal' -> 'kuartal' fed the one false positive observed in real-document
+            # testing). The LLM judges from the surrounding context alone.
             cand = _Candidate(
                 index=len(candidates_by_key),
                 kind="unknown_word",
                 display_text=word,
                 context=clean_text[ctx_start:ctx_end],
-                suggestion_hint=suggestions[0] if suggestions else None,
+                suggestion_hint=None,
             )
             candidates_by_key[key] = cand
         cand.occurrences.append(_Occurrence(start=start, end=end, text=word))
