@@ -93,11 +93,16 @@ def main(argv: Optional[List[str]] = None) -> int:
         write_json(args.json, metrics, results)
         print(f"Wrote JSON report to {args.json}")
 
-    all_passed = all(r.passed for r in results)
+    # Non-zero on ANY failing case (including value_ok-only failures, which don't lower
+    # verdict accuracy) so CI can't go green past a broken case; --fail-under adds an
+    # explicit accuracy threshold on top.
+    exit_code = 0
+    if not all(r.passed for r in results):
+        exit_code = 1
     if args.fail_under is not None and metrics.accuracy < args.fail_under:
         print(f"FAIL: accuracy {metrics.accuracy:.3f} < fail-under {args.fail_under}", file=sys.stderr)
-        return 1
-    return 0 if all_passed or args.fail_under is not None else 0
+        exit_code = 1
+    return exit_code
 
 
 if __name__ == "__main__":

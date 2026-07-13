@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          # Matches the production Dockerfile (python:3.12-slim).
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run unit tests
+        run: pytest -q
+
+      # Layer-1 accuracy eval: deterministic, no API keys (conftest-equivalent — the
+      # runner never imports llm_provider). Gates on 100% verdict accuracy AND fails
+      # on any per-case failure, so a matcher/engine regression can't reach main green.
+      - name: Run accuracy eval (Layer 1)
+        run: python -m eval.run_comparison_eval --fail-under 1.0

@@ -10,6 +10,8 @@ pinned: false
 
 # Fact-Checker
 
+[![CI](https://github.com/DStaDQAD/Document-Quality-Assurance/actions/workflows/ci.yml/badge.svg)](https://github.com/DStaDQAD/Document-Quality-Assurance/actions/workflows/ci.yml)
+
 Verifies natural-language claims about statistical data. The project has two independent
 verification pipelines that share one FastAPI app.
 
