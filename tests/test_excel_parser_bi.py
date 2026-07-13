@@ -83,6 +83,51 @@ def test_lookup_fuzzy_returns_none_when_nothing_matches():
     assert value is None
 
 
+def test_lookup_fuzzy_prefers_fuller_label_over_short_generic_row_contained_in_query():
+    # Regression for BI I.1: the components section has 'Simpanan Berjangka (Rupiah dan Valas)'
+    # while the determinants section has a nested row labelled just 'Simpanan' (a negative
+    # liability item). 'simpanan' is contained in the query 'simpanan berjangka', and with both
+    # containment directions ranked shortest-first in one pool, the generic 'Simpanan' row won
+    # and produced a false Refuted. Query-contained-in-label must outrank label-contained-in-query.
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "I.1"
+    ws.append(["Uang Beredar dan faktor-faktor yang mempengaruhinya"])
+    ws.append(["(Miliar Rp)"])
+    ws.append([])
+    ws.append([None, None, None, 2026])
+    ws.append([None, None, None, "Jan"])
+    ws.append([1, None, "Simpanan Berjangka (Rupiah dan Valas)", 3158896.8825])
+    ws.append([2, None, "Simpanan", -560955.7467])
+    result = parse_bi_table(_save(wb), "I.1")
+
+    matched_label, value = result.lookup_fuzzy("simpanan berjangka", 2026, "Jan")
+
+    assert matched_label == "Simpanan Berjangka (Rupiah dan Valas)"
+    assert value == 3158896.8825
+
+
+def test_lookup_fuzzy_label_in_query_direction_picks_most_specific_label():
+    # When only the label-in-query direction matches (verbose LLM query embedding a label),
+    # the LONGEST (most specific) label must win, not the shortest.
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "I.1"
+    ws.append(["Uang Beredar"])
+    ws.append(["(Miliar Rp)"])
+    ws.append([])
+    ws.append([None, None, None, 2026])
+    ws.append([None, None, None, "Jan"])
+    ws.append([1, None, "Giro", 1.0])
+    ws.append([2, None, "Giro Valas", 760086.4])
+    result = parse_bi_table(_save(wb), "I.1")
+
+    matched_label, value = result.lookup_fuzzy("pertumbuhan giro valas pada Januari", 2026, "Jan")
+
+    assert matched_label == "Giro Valas"
+    assert value == 760086.4
+
+
 def test_lookup_fuzzy_does_not_bind_distinct_metric_sharing_a_prefix():
     # A distinct metric that merely shares a long prefix with a real row must NOT be matched:
     # neither name contains the other. (Regression for the old startswith(query[:12]) rule that

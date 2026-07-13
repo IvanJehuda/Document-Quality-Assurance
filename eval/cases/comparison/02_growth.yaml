@@ -41,6 +41,32 @@
     verdict: Refuted
     computed_value: 9.2221
 
+- id: yoy_simpanan_berjangka_not_shadowed_by_generic_simpanan_row
+  description: >
+    Regression guard for the label-matching tier order: BI I.1 has BOTH 'Simpanan Berjangka
+    (Rupiah dan Valas)' (Uang Kuasi component, the right row) and a nested determinants row
+    labelled just 'Simpanan' (negative liability). A claim about "simpanan berjangka" must bind
+    to the fuller label, not the short generic one — the old single-pool shortest-wins rule
+    picked 'Simpanan' and returned a false Refuted (-16,27% vs the correct 4,6%). Real values.
+  table:
+    title: "Uang Beredar dan faktor-faktor yang mempengaruhinya"
+    unit: "Miliar Rp"
+    data:
+      - {label: "Simpanan Berjangka (Rupiah dan Valas)", year: 2026, month: Apr, value: 3158896.8825}
+      - {label: "Simpanan Berjangka (Rupiah dan Valas)", year: 2025, month: Apr, value: 3019897.8733}
+      - {label: "Simpanan", year: 2026, month: Apr, value: -560955.7467}
+      - {label: "Simpanan", year: 2025, month: Apr, value: -482476.0102}
+  fact:
+    operation: yoy_growth
+    unit: "persen_yoy"
+    claimed_value: 4.6
+    context_quote: "simpanan berjangka dan tabungan lainnya masing-masing tumbuh sebesar 4,6% (yoy)"
+    periods:
+      - {metric_label: "simpanan berjangka", year: 2026, month: Apr}
+  expected:
+    verdict: Entailed
+    computed_value: 4.6028
+
 - id: yoy_prior_year_missing_inconclusive
   description: "No prior-year datapoint for the yoy denominator → Inconclusive"
   table:

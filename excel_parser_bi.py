@@ -86,15 +86,41 @@ class BITableData:
             return []
         return sorted({(y, m) for (l, y, m) in self._data if l == matched})
 
+    def _match_tiers(self, query: str):
+        """Yield candidate row labels for query, best tier first.
+
+        Tier order (each tier yields (label, sort_key) candidates; the caller takes the first
+        tier that produces a usable match, picking min(sort_key)):
+
+          1. Case-insensitive exact equality.
+          2. Query contained in label — the label is the fuller official name of what the query
+             names ("simpanan berjangka" → "Simpanan Berjangka (Rupiah dan Valas)"). SHORTEST
+             label wins (closest to the query).
+          3. Label contained in query — a verbose query embeds an exact label name. LONGEST
+             label wins (most specific). This direction is kept LAST and specificity-ranked
+             because it is the dangerous one: a short generic row like 'Simpanan' (a nested
+             sub-item of a different section) is contained in "simpanan berjangka" and, when
+             ranked shortest-first in the same pool as tier 2, shadowed the correct row —
+             observed on BI I.1, producing a false Refuted against the negative 'Simpanan'
+             liability row.
+
+        Containment (not shared-prefix) in both tiers keeps distinct metrics that merely start
+        alike apart: "Uang Beredar Digital" binds to nothing ("Uang Beredar Luas(M2)" neither
+        contains it nor is contained by it).
+        """
+        q_lower = query.lower().strip()
+        tier1 = [(label, 0) for label in self.row_labels if label.lower().strip() == q_lower]
+        tier2 = [(label, len(label)) for label in self.row_labels if q_lower in label.lower()]
+        tier3 = [(label, -len(label)) for label in self.row_labels if label.lower().strip() in q_lower]
+        return [tier1, tier2, tier3]
+
     def _resolve_label(self, query: str) -> Optional[str]:
         """Return the best matching row label for query, or None if nothing matches."""
         if query in self.row_labels:
             return query
-        q_lower = query.lower()
-        for label in self.row_labels:
-            l_lower = label.lower()
-            if q_lower in l_lower or l_lower in q_lower:
-                return label
+        for tier in self._match_tiers(query):
+            if tier:
+                return min(tier, key=lambda t: t[1])[0]
         if self.title and self._query_matches_table_subject(query):
             for label in self.row_labels:
                 if label.strip().lower() == "total":
@@ -104,9 +130,12 @@ class BITableData:
     def lookup_fuzzy(
         self, query: str, year: int, month: str
     ) -> Tuple[Optional[str], Optional[float]]:
-        """Return (matched_label, value) using exact → substring → title-aware Total fallback.
+        """Return (matched_label, value) using exact → tiered containment → Total fallback.
 
-        The third tier handles tables where the overall metric (e.g. 'Cadangan Devisa')
+        See _match_tiers for the tier order and why the two containment directions must not
+        share one pool. Within a tier, only labels that actually have data for (year, month)
+        are considered, so a better-named but data-less row never blocks a usable one.
+        The final fallback handles tables where the overall metric (e.g. 'Cadangan Devisa')
         is not a row label but IS the table's subject (from self.title), and the aggregate
         is stored in a row simply called 'Total'.
         """
@@ -114,22 +143,14 @@ class BITableData:
         v = self._data.get((query, year, month))
         if v is not None:
             return query, v
-        # Tier 2: one name is contained in the other, either direction (shortest match wins).
-        # Containment both ways — rather than a shared fixed-length prefix — is what keeps
-        # distinct metrics that merely start alike apart: "Uang Beredar Digital" must NOT bind
-        # to "Uang Beredar Luas(M2)" (neither contains the other), whereas "Tota"→"Total" and a
-        # verbose query ending in an exact label name still resolve correctly.
-        q_lower = query.lower()
-        best_label: Optional[str] = None
-        for label in self.row_labels:
-            l_lower = label.lower()
-            if q_lower in l_lower or l_lower in q_lower:
-                v = self._data.get((label, year, month))
-                if v is not None:
-                    if best_label is None or len(label) < len(best_label):
-                        best_label = label
-        if best_label is not None:
-            return best_label, self._data.get((best_label, year, month))
+        for tier in self._match_tiers(query):
+            with_data = [
+                (label, key) for label, key in tier
+                if self._data.get((label, year, month)) is not None
+            ]
+            if with_data:
+                best = min(with_data, key=lambda t: t[1])[0]
+                return best, self._data[(best, year, month)]
         # Title-aware Total fallback: query describes this table's subject → return 'Total' row
         if self.title and self._query_matches_table_subject(query):
             for label in self.row_labels:
