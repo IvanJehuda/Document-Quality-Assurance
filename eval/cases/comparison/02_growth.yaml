@@ -67,6 +67,33 @@
     verdict: Entailed
     computed_value: 4.6028
 
+- id: yoy_qualified_subrow_not_shadowed_by_other_sections_duplicate
+  description: >
+    Regression guard for duplicate-label shadowing: BI I.1 repeats sub-row labels like
+    'Rupiah' under both Simpanan Berjangka and Tabungan Lainnya. The parser used to keep only
+    the FIRST section's values (first-occurrence-wins), so a claim about "tabungan lainnya
+    rupiah" silently read Simpanan Berjangka's Rupiah (yoy 2,70%) instead of its own (7,08%).
+    Rows now arrive parent-qualified ('Parent > Rupiah') and the leaf matching tier must pick
+    the section whose parent words appear in the query. Real values from TABEL1_1.xls I.1.
+  table:
+    title: "Uang Beredar dan faktor-faktor yang mempengaruhinya"
+    unit: "Miliar Rp"
+    data:
+      - {label: "Simpanan Berjangka (Rupiah dan Valas) > Rupiah", year: 2026, month: Apr, value: 2748250.167}
+      - {label: "Simpanan Berjangka (Rupiah dan Valas) > Rupiah", year: 2025, month: Apr, value: 2676099.9896}
+      - {label: "Tabungan Lainnya (Rupiah dan Valas) > Rupiah", year: 2026, month: Apr, value: 2696896.651}
+      - {label: "Tabungan Lainnya (Rupiah dan Valas) > Rupiah", year: 2025, month: Apr, value: 2518681.1564}
+  fact:
+    operation: yoy_growth
+    unit: "persen_yoy"
+    claimed_value: 7.1
+    context_quote: "tabungan lainnya rupiah tumbuh sebesar 7,1% (yoy)"
+    periods:
+      - {metric_label: "tabungan lainnya rupiah", year: 2026, month: Apr}
+  expected:
+    verdict: Entailed
+    computed_value: 7.0757
+
 - id: yoy_prior_year_missing_inconclusive
   description: "No prior-year datapoint for the yoy denominator → Inconclusive"
   table:

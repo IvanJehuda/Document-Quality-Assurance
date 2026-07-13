@@ -2,8 +2,9 @@ import io
 
 import pytest
 from openpyxl import Workbook
+from openpyxl.styles import Alignment
 
-from excel_parser_bi import MONTH_ABBREVS, parse_bi_table
+from excel_parser_bi import MONTH_ABBREVS, _qualify_duplicate_labels, parse_bi_table
 
 
 def _save(wb) -> bytes:
@@ -185,6 +186,98 @@ def test_year_anchor_at_december_column_still_maps_all_months_correctly():
 
     assert result.lookup("Total", 2023, "Jan") == 100.0
     assert result.lookup("Total", 2023, "Dec") == 111.0
+
+
+# ---------------------------------------------------------------------------
+# Duplicate-label disambiguation (parent-qualified via the indent hierarchy)
+# ---------------------------------------------------------------------------
+
+def test_qualify_duplicate_labels_prefixes_duplicates_with_nearest_parent():
+    rows = [
+        ("Uang Kuasi", 1, {3: 1.0}),
+        ("Simpanan Berjangka", 2, {3: 2.0}),
+        ("Rupiah", 3, {3: 3.0}),
+        ("Valuta Asing", 3, {3: 4.0}),
+        ("Tabungan Lainnya", 2, {3: 5.0}),
+        ("Rupiah", 3, {3: 6.0}),
+        ("Giro Valas", 2, {3: 7.0}),
+    ]
+
+    result = _qualify_duplicate_labels(rows)
+
+    labels = [label for label, _ in result]
+    # Duplicated 'Rupiah' gets a parent prefix on EVERY occurrence; unique labels untouched.
+    assert labels == [
+        "Uang Kuasi",
+        "Simpanan Berjangka",
+        "Simpanan Berjangka > Rupiah",
+        "Valuta Asing",
+        "Tabungan Lainnya",
+        "Tabungan Lainnya > Rupiah",
+        "Giro Valas",
+    ]
+    # Values stay attached to their own rows.
+    assert dict(result)["Simpanan Berjangka > Rupiah"] == {3: 3.0}
+    assert dict(result)["Tabungan Lainnya > Rupiah"] == {3: 6.0}
+
+
+def test_qualify_duplicate_labels_without_indents_degrades_to_bare_names():
+    rows = [("Rupiah", 0, {3: 1.0}), ("Rupiah", 0, {3: 2.0})]
+
+    result = _qualify_duplicate_labels(rows)
+
+    assert [label for label, _ in result] == ["Rupiah", "Rupiah"]
+
+
+def _build_hierarchical_workbook_bytes():
+    """Two sections that both contain a 'Rupiah' sub-row with DIFFERENT values."""
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "I.1"
+    ws.append(["Uang Beredar dan faktor-faktor yang mempengaruhinya"])
+    ws.append(["(Miliar Rp)"])
+    ws.append([])
+    ws.append([None, None, None, 2026])
+    ws.append([None, None, None, "Jan"])
+    data = [
+        ("Simpanan Berjangka (Rupiah dan Valas)", 2, 3158896.0),
+        ("Rupiah", 3, 2748250.0),
+        ("Tabungan Lainnya (Rupiah dan Valas)", 2, 2928330.0),
+        ("Rupiah", 3, 2696896.0),
+        ("Simpanan", 3, -560955.0),
+    ]
+    for i, (label, indent, value) in enumerate(data, 1):
+        ws.append([i, None, label, value])
+        ws.cell(row=5 + i, column=3).alignment = Alignment(indent=indent)
+    return _save(wb)
+
+
+def test_parse_bi_table_keeps_each_sections_duplicate_subrow_values():
+    result = parse_bi_table(_build_hierarchical_workbook_bytes(), "I.1")
+
+    # Both Rupiah sub-rows survive with their own values (no first-occurrence shadowing).
+    assert result.lookup("Simpanan Berjangka (Rupiah dan Valas) > Rupiah", 2026, "Jan") == 2748250.0
+    assert result.lookup("Tabungan Lainnya (Rupiah dan Valas) > Rupiah", 2026, "Jan") == 2696896.0
+
+
+def test_lookup_fuzzy_leaf_tier_uses_parent_words_to_disambiguate():
+    result = parse_bi_table(_build_hierarchical_workbook_bytes(), "I.1")
+
+    matched, value = result.lookup_fuzzy("tabungan lainnya rupiah", 2026, "Jan")
+
+    assert matched == "Tabungan Lainnya (Rupiah dan Valas) > Rupiah"
+    assert value == 2696896.0
+
+
+def test_lookup_fuzzy_leaf_tier_beats_generic_label_contained_in_query():
+    # 'simpanan' (generic negative row) is contained in the query, but the corroborated
+    # leaf match (parent 'Simpanan Berjangka' + leaf 'Rupiah') must win.
+    result = parse_bi_table(_build_hierarchical_workbook_bytes(), "I.1")
+
+    matched, value = result.lookup_fuzzy("simpanan berjangka rupiah", 2026, "Jan")
+
+    assert matched == "Simpanan Berjangka (Rupiah dan Valas) > Rupiah"
+    assert value == 2748250.0
 
 
 def test_parse_bi_table_raises_when_sheet_not_found():
