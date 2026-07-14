@@ -18,3 +18,6 @@ sample_data/TABEL5_9 (1).xls
 architecture.drawio
 CLAUDE.md
 /eval_report.json
+
+# Personal automation config (contains NIM, mentor email, Telegram chat ID)
+n8n-logbook-magang.json
