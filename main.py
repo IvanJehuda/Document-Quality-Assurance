@@ -178,6 +178,12 @@ async def ui_root() -> FileResponse:
     return FileResponse(STATIC_DIR / "index.html")
 
 
+@app.get("/favicon.svg", include_in_schema=False)
+async def favicon() -> FileResponse:
+    """Browser-tab icon — the sidebar brand logo as a standalone SVG."""
+    return FileResponse(STATIC_DIR / "favicon.svg")
+
+
 @app.get("/api/auth-status")
 async def auth_status(request: Request) -> dict:
     """Lets the shell decide whether to show the login overlay. Open endpoint."""
