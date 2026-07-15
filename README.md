@@ -1,13 +1,3 @@
----
-title: Document Quality Assurance
-emoji: 📊
-colorFrom: blue
-colorTo: indigo
-sdk: docker
-app_port: 7860
-pinned: false
----
-
 # Fact-Checker
 
 [![CI](https://github.com/DStaDQAD/Document-Quality-Assurance/actions/workflows/ci.yml/badge.svg)](https://github.com/DStaDQAD/Document-Quality-Assurance/actions/workflows/ci.yml)
