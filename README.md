@@ -124,6 +124,7 @@ reachable only via the API endpoints below. Interactive API docs: `http://127.0.
 | `/api/verify-document-pdf` | POST | Same as above, but the document is an uploaded digital PDF (falls back to Gemini vision OCR if extracted text is too sparse). |
 | `/api/upload-excel-source` | POST | Upload a `.xlsx` file to ingest as a new data source into `excel_facts`. Trusted-uploader endpoint, no auth - meant for a developer/small team, not arbitrary public users. |
 | `/api/verify-paired` | POST | Mode 2. Upload a PDF report plus its companion BI-format Excel file; verifies every quantitative claim in the PDF narrative against the Excel's authoritative values, plus an Indonesian typo/grammar check on the same narrative text. |
+| `/api/verify-paired-stream` | POST | Same inputs and same final payload as `/api/verify-paired`, but streams NDJSON progress lines (`{"type":"stage",...}`) while the ~40s pipeline runs, then a terminal `{"type":"result","data":{...}}`. This is what the UI calls. Because the response starts before the work does, a mid-run failure arrives as `{"type":"error"}` rather than an HTTP error status. |
 | `/api/tables` | GET | List every table in the database. |
 | `/api/tables/{table_name}` | GET | Paginated raw rows for one table (`?limit=&offset=`). |
 | `/health` | GET | Liveness check. |

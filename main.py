@@ -57,6 +57,7 @@ Pipeline:
 import asyncio
 import hashlib
 import hmac
+import json
 import logging
 import os
 import re
@@ -64,10 +65,15 @@ import secrets
 import time
 from pathlib import Path
 
-from typing import List
+from typing import Any, AsyncIterator, Callable, Dict, List, Optional, Tuple
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
+from fastapi.responses import (
+    FileResponse,
+    JSONResponse,
+    PlainTextResponse,
+    StreamingResponse,
+)
 
 from db import DB_PATH, fetch_table_rows, get_readonly_db, list_tables
 from excel_parser_bi import list_sheet_names
@@ -398,6 +404,94 @@ async def extract_pdf_text_endpoint(
 # --------------------------------------------------------------------------
 
 
+async def _read_paired_uploads(
+    pdf_file: UploadFile,
+    excel_file: List[UploadFile],
+    sheet_names: str,
+) -> Tuple[bytes, str, List[Tuple[bytes, str, str]]]:
+    """Drain the multipart uploads into memory up front.
+
+    Both paired endpoints do this before any pipeline work starts. The streaming endpoint
+    especially needs it: its response generator runs after the handler returns, by which
+    point the request body is no longer safe to read.
+    """
+    pdf_bytes = await pdf_file.read()
+    sheets = [s.strip() for s in sheet_names.split(",") if s.strip()] or ["I.1"]
+
+    excel_sources: List[Tuple[bytes, str, str]] = []
+    for i, ef in enumerate(excel_file):
+        sheet = sheets[i] if i < len(sheets) else sheets[-1]
+        excel_sources.append((await ef.read(), sheet, ef.filename or f"table_{i+1}.xls"))
+
+    return pdf_bytes, (pdf_file.filename or "report.pdf"), excel_sources
+
+
+async def _run_paired_pipeline(
+    pdf_bytes: bytes,
+    pdf_filename: str,
+    excel_sources: List[Tuple[bytes, str, str]],
+    emit: Optional[Callable[[Dict[str, Any]], None]] = None,
+) -> PairedVerificationResponse:
+    """Run the full PDF+Excel verification and return the merged fact + typo response.
+
+    Shared by /api/verify-paired (which discards progress) and /api/verify-paired-stream
+    (which forwards it to the client), so the two endpoints can never drift apart.
+
+    `emit` receives stage event dicts (see paired_verifier.ProgressCb). It is only ever
+    called from the event loop thread — never from inside asyncio.to_thread — so a caller
+    may safely use a non-thread-safe sink such as asyncio.Queue.put_nowait.
+    """
+    def _emit(stage: str, status: str, **extra) -> None:
+        if emit is not None:
+            emit({"type": "stage", "stage": stage, "status": status, **extra})
+
+    vision_llm = None
+    try:
+        vision_llm = get_vision_llm()
+    except RuntimeError:
+        logger.warning("Vision LLM not available (GOOGLE_API_KEY missing); vision fallback disabled.")
+
+    # Extract the narrative text once and share it between fact-verification and the
+    # typo/grammar check — the vision fallback is an LLM call, so re-extracting per
+    # consumer would double its cost and rate-limit exposure for no benefit.
+    _emit("pdf", "running", detail=pdf_filename)
+    narrative_text = await extract_narrative_text(pdf_bytes, vision_llm)
+    n_pages = len(_PAGE_MARKER_RE.findall(narrative_text))
+    n_chars = len(_PAGE_MARKER_RE.sub("", narrative_text).strip())
+    _emit("pdf", "done", detail=f"{n_pages} halaman · {n_chars:,} karakter".replace(",", "."))
+
+    # Prefer Gemini for the typo/grammar escalation call when available - it judges
+    # domain jargon (e.g. "kartal", "inflasi") more reliably than the Groq text model,
+    # which was observed hallucinating a false-positive correction for "kartal" during
+    # real-document testing.
+    typo_llm = vision_llm if vision_llm is not None else get_llm(temperature=0.0)
+
+    async def _run_typo_check():
+        # check_typos is sync (dictionary pass + one batched LLM call), so it goes to a
+        # thread. The stage events are emitted from HERE, on the event loop, rather than
+        # from inside the thread, keeping the emit contract single-threaded.
+        _emit("typo", "running")
+        result = await asyncio.to_thread(check_typos, narrative_text, typo_llm)
+        _emit("typo", "done", detail=result.summary)
+        return result
+
+    # Fact verification and the typo/grammar check both only depend on narrative_text,
+    # so run them concurrently to overlap their LLM round-trips instead of waiting for
+    # the whole fact check to finish before the (single-call) typo pass even starts.
+    fact_result, typo_result = await asyncio.gather(
+        verify_paired(
+            narrative_text=narrative_text,
+            excel_sources=excel_sources,
+            llm=get_llm(temperature=0.0),
+            pdf_filename=pdf_filename,
+            vision_llm=vision_llm,
+            progress_cb=emit,
+        ),
+        _run_typo_check(),
+    )
+    return fact_result.model_copy(update={"typo_check": typo_result})
+
+
 @app.post("/api/verify-paired", response_model=PairedVerificationResponse)
 async def verify_paired_endpoint(
     pdf_file: UploadFile = File(..., description="PDF report to verify."),
@@ -412,51 +506,78 @@ async def verify_paired_endpoint(
 
     sheet_names: comma-separated sheet names, one per Excel file (e.g. "I.1,II.1").
     If fewer sheet names than files are provided, the last sheet name is reused for remaining files.
+
+    Returns the whole response in one shot. For live progress during the (typically 40s+)
+    run, use /api/verify-paired-stream instead — same inputs, same final payload.
     """
-    pdf_bytes = await pdf_file.read()
-
-    sheets = [s.strip() for s in sheet_names.split(",") if s.strip()] or ["I.1"]
-
-    excel_sources = []
-    for i, ef in enumerate(excel_file):
-        sheet = sheets[i] if i < len(sheets) else sheets[-1]
-        excel_sources.append((await ef.read(), sheet, ef.filename or f"table_{i+1}.xls"))
+    pdf_bytes, pdf_name, excel_sources = await _read_paired_uploads(pdf_file, excel_file, sheet_names)
 
     try:
-        vision_llm = None
-        try:
-            vision_llm = get_vision_llm()
-        except RuntimeError:
-            logger.warning("Vision LLM not available (GOOGLE_API_KEY missing); vision fallback disabled.")
-
-        # Extract the narrative text once and share it between fact-verification and the
-        # typo/grammar check — the vision fallback is an LLM call, so re-extracting per
-        # consumer would double its cost and rate-limit exposure for no benefit.
-        narrative_text = await extract_narrative_text(pdf_bytes, vision_llm)
-
-        # Prefer Gemini for the typo/grammar escalation call when available - it judges
-        # domain jargon (e.g. "kartal", "inflasi") more reliably than the Groq text model,
-        # which was observed hallucinating a false-positive correction for "kartal" during
-        # real-document testing.
-        typo_llm = vision_llm if vision_llm is not None else get_llm(temperature=0.0)
-
-        # Fact verification and the typo/grammar check both only depend on narrative_text,
-        # so run them concurrently to overlap their LLM round-trips instead of waiting for
-        # the whole fact check to finish before the (single-call) typo pass even starts.
-        fact_result, typo_result = await asyncio.gather(
-            verify_paired(
-                narrative_text=narrative_text,
-                excel_sources=excel_sources,
-                llm=get_llm(temperature=0.0),
-                pdf_filename=pdf_file.filename or "report.pdf",
-                vision_llm=vision_llm,
-            ),
-            asyncio.to_thread(check_typos, narrative_text, typo_llm),
-        )
-        return fact_result.model_copy(update={"typo_check": typo_result})
+        return await _run_paired_pipeline(pdf_bytes, pdf_name, excel_sources)
     except Exception as exc:
         logger.exception("Paired verification failed")
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/verify-paired-stream")
+async def verify_paired_stream_endpoint(
+    pdf_file: UploadFile = File(..., description="PDF report to verify."),
+    excel_file: List[UploadFile] = File(..., description="One or more .xls/.xlsx statistical tables."),
+    sheet_names: str = "I.1",
+) -> StreamingResponse:
+    """Same as /api/verify-paired, but streams progress while the pipeline runs.
+
+    The response is NDJSON (one JSON object per line), not SSE: the request is a multipart
+    upload, which EventSource cannot send, and the browser reads this fine via fetch() +
+    response.body.getReader(). Lines are one of:
+        {"type": "stage",  "stage": "extract", "status": "running", "current": 2, "total": 3,
+         "detail": "3 bagian teks"}
+        {"type": "result", "data": {...}}    # the PairedVerificationResponse payload
+        {"type": "error",  "detail": "..."}
+
+    Failures arrive as a terminal "error" line rather than an HTTP error status: by the time
+    the pipeline runs, the 200 and its headers have already been flushed to the client.
+    """
+    pdf_bytes, pdf_name, excel_sources = await _read_paired_uploads(pdf_file, excel_file, sheet_names)
+
+    async def event_stream() -> AsyncIterator[str]:
+        queue: asyncio.Queue = asyncio.Queue()
+        done_sentinel = object()
+
+        async def run() -> PairedVerificationResponse:
+            try:
+                return await _run_paired_pipeline(
+                    pdf_bytes, pdf_name, excel_sources, emit=queue.put_nowait
+                )
+            finally:
+                # Unblocks the drain loop below on success AND on failure; the exception
+                # itself is re-raised by the `await task` that follows.
+                queue.put_nowait(done_sentinel)
+
+        task = asyncio.create_task(run())
+
+        while True:
+            event = await queue.get()
+            if event is done_sentinel:
+                break
+            yield json.dumps(event, ensure_ascii=False) + "\n"
+
+        try:
+            result = await task
+            payload = {"type": "result", "data": result.model_dump(mode="json")}
+        except Exception as exc:
+            logger.exception("Paired verification (stream) failed")
+            payload = {"type": "error", "detail": str(exc)}
+        yield json.dumps(payload, ensure_ascii=False) + "\n"
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="application/x-ndjson",
+        # Render (and nginx-family proxies generally) buffer responses by default, which
+        # would hold every progress line back until the pipeline finished — defeating the
+        # point. These ask the proxy to pass chunks through as they are produced.
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @app.get("/api/tables", response_model=TableListResponse)

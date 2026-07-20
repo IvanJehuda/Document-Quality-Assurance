@@ -322,6 +322,52 @@ pre.sql::before {
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 
+/* ── Progress checklist (fed by /api/verify-paired-stream) ── */
+.progress-card {
+  background: var(--white); border: 1px solid var(--border);
+  border-radius: var(--r-lg); padding: 15px 17px; margin-top: 10px;
+}
+.progress-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding-bottom: 11px; margin-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+.progress-title { font-size: 13px; font-weight: 600; color: var(--text-900); }
+.progress-elapsed {
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 12px; color: var(--text-400); font-variant-numeric: tabular-nums;
+}
+.progress-stage {
+  display: flex; align-items: center; gap: 10px;
+  padding: 6px 0; font-size: 13px;
+}
+.progress-icon {
+  width: 15px; height: 15px; flex-shrink: 0;
+  border-radius: 50%; position: relative;
+}
+.progress-stage.is-pending .progress-icon {
+  border: 2px solid var(--border-dark); opacity: 0.5;
+}
+.progress-stage.is-running .progress-icon {
+  border: 2px solid var(--border-dark); border-top-color: var(--blue-500);
+  animation: spin 0.7s linear infinite;
+}
+.progress-stage.is-done .progress-icon { background: var(--green-700); }
+.progress-stage.is-done .progress-icon::after {
+  content: ""; position: absolute;
+  left: 5.2px; top: 2.8px; width: 3px; height: 7px;
+  border: solid var(--white); border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+.progress-stage.is-pending .progress-label { color: var(--text-400); }
+.progress-stage.is-running .progress-label { color: var(--text-900); font-weight: 600; }
+.progress-stage.is-done .progress-label { color: var(--text-500); }
+.progress-detail {
+  margin-left: auto; padding-left: 12px; text-align: right;
+  font-size: 12px; color: var(--text-400);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
 .error-banner {
   background: linear-gradient(135deg, #FFF1F2, #FFF5F5);
   border: 1px solid #FECACA;
@@ -966,21 +1012,6 @@ body.auth-locked .app {
     return div.innerHTML;
   }
 
-  async function callApi(url, options, resultEl, renderFn) {
-    resultEl.innerHTML = `<div class="loading">Memproses...</div>`;
-    try {
-      const res = await fetch(url, options);
-      const data = await res.json();
-      if (!res.ok) {
-        resultEl.innerHTML = `<div class="error-banner">${escapeHtml(data.detail || "Terjadi kesalahan.")}</div>`;
-        return;
-      }
-      resultEl.innerHTML = renderFn(data);
-    } catch (err) {
-      resultEl.innerHTML = `<div class="error-banner">Gagal menghubungi server: ${escapeHtml(err.message)}</div>`;
-    }
-  }
-
   function withDisabledButton(button, fn) {
     button.disabled = true;
     const origHTML = button.innerHTML;
@@ -1488,6 +1519,112 @@ body.auth-locked .app {
     if (pageSelect) pageSelect.addEventListener("change", () => { currentPage = pageSelect.value; applyFilters(); });
   }
 
+  // ══ Paired verification with streamed progress ══════════════════════
+  // The paired check takes 40s+, so it talks to /api/verify-paired-stream and reports each
+  // pipeline stage as it happens instead of showing one opaque spinner. Rows are listed in
+  // pipeline order, but "typo" actually runs concurrently with extract/compare — each row
+  // tracks its own state, so no row is waiting on the one above it.
+  const PAIRED_STAGES = [
+    ["pdf",     "Membaca PDF"],
+    ["excel",   "Parsing tabel Excel"],
+    ["extract", "Ekstraksi klaim"],
+    ["compare", "Membandingkan dengan Excel"],
+    ["typo",    "Cek ejaan & tata bahasa"],
+  ];
+
+  function renderProgressShell() {
+    const rows = PAIRED_STAGES.map(([key, label]) => `
+      <div class="progress-stage is-pending" data-stage="${key}">
+        <span class="progress-icon"></span>
+        <span class="progress-label">${label}</span>
+        <span class="progress-detail"></span>
+      </div>`).join("");
+    return `<div class="progress-card">
+      <div class="progress-head">
+        <span class="progress-title">Memproses dokumen</span>
+        <span class="progress-elapsed">0s</span>
+      </div>${rows}
+    </div>`;
+  }
+
+  function updateProgressStage(resultEl, ev) {
+    const row = resultEl.querySelector(`.progress-stage[data-stage="${ev.stage}"]`);
+    if (!row) return;
+    row.classList.remove("is-pending", "is-running", "is-done");
+    row.classList.add(ev.status === "done" ? "is-done" : "is-running");
+    let detail = ev.detail || "";
+    if (ev.status !== "done" && ev.total != null) {
+      detail = `${ev.current}/${ev.total}${detail ? ` · ${detail}` : ""}`;
+    }
+    row.querySelector(".progress-detail").textContent = detail;
+  }
+
+  // Reads an NDJSON stream (one JSON object per line) from a fetch response, calling
+  // onEvent per object as it arrives. A network chunk can split mid-line, so the trailing
+  // partial is held back in `buf` until the rest of that line turns up.
+  async function streamNdjson(url, options, onEvent) {
+    const res = await fetch(url, options);
+    if (!res.ok) {
+      let detail = `Server membalas ${res.status}.`;
+      try { detail = (await res.json()).detail || detail; } catch (_) {}
+      throw new Error(detail);
+    }
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = "";
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      const lines = buf.split("\n");
+      buf = lines.pop();
+      for (const line of lines) if (line.trim()) onEvent(JSON.parse(line));
+    }
+    if (buf.trim()) onEvent(JSON.parse(buf));
+  }
+
+  async function runPairedVerification(resultEl, formData, sheetNames) {
+    resultEl.innerHTML = renderProgressShell();
+    const elapsedEl = resultEl.querySelector(".progress-elapsed");
+    const startedAt = Date.now();
+    const ticker = setInterval(() => {
+      elapsedEl.textContent = `${Math.round((Date.now() - startedAt) / 1000)}s`;
+    }, 1000);
+
+    let result = null;
+    let failure = null;
+    try {
+      await streamNdjson(
+        `/api/verify-paired-stream?sheet_names=${encodeURIComponent(sheetNames)}`,
+        { method: "POST", body: formData },
+        (ev) => {
+          if (ev.type === "stage") updateProgressStage(resultEl, ev);
+          else if (ev.type === "result") result = ev.data;
+          else if (ev.type === "error") failure = ev.detail;
+        },
+      );
+    } catch (err) {
+      failure = `Gagal menghubungi server: ${err.message}`;
+    } finally {
+      clearInterval(ticker);
+    }
+
+    // The stream carries its own terminal event, so a stream that ends without either one
+    // means the connection dropped mid-run — report that rather than rendering blank.
+    if (failure === null && result === null) {
+      failure = "Server menutup koneksi sebelum hasil dikirim.";
+    }
+    if (failure !== null) {
+      resultEl.innerHTML = `<div class="error-banner">${escapeHtml(failure)}</div>`;
+      return;
+    }
+
+    resultEl.innerHTML = renderPairedResponse(result);
+    document.getElementById("paired-container").classList.add("has-results");
+    document.getElementById("panel-paired").classList.add("has-results");
+    attachPairedHandlers(resultEl);
+  }
+
   document.querySelector('[data-action="paired"]').addEventListener("click", (e) => {
     const pdfInp   = document.getElementById("paired-pdf");
     const resultEl = document.getElementById("paired-result");
@@ -1500,21 +1637,7 @@ body.auth-locked .app {
     formData.append("pdf_file", pdfInp.files[0]);
     const sheetNames = filledSources.map(s => s.sheetSelect.value || "I.1").join(",");
     filledSources.forEach(s => formData.append("excel_file", s.inp.files[0]));
-    withDisabledButton(e.currentTarget, () =>
-      callApi(`/api/verify-paired?sheet_names=${encodeURIComponent(sheetNames)}`,
-        { method: "POST", body: formData },
-        resultEl,
-        (data) => {
-          const html = renderPairedResponse(data);
-          setTimeout(() => {
-            document.getElementById("paired-container").classList.add("has-results");
-            document.getElementById("panel-paired").classList.add("has-results");
-            attachPairedHandlers(resultEl);
-          }, 0);
-          return html;
-        })
-
-    );
+    withDisabledButton(e.currentTarget, () => runPairedVerification(resultEl, formData, sheetNames));
   });
 
   // Sidebar toggle

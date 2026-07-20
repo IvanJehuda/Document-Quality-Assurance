@@ -16,7 +16,7 @@ comparison step.
 import logging
 import re
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from langchain_core.language_models import BaseChatModel
 
@@ -37,6 +37,16 @@ from structured_extractor import (
 )
 
 logger = logging.getLogger("fact-checker")
+
+# ── Progress reporting ────────────────────────────────────────────────────────
+# A callback receiving one stage event dict per pipeline step, so a streaming caller (see
+# main.py's /api/verify-paired-stream) can tell the user which step is running during the
+# ~40s wait instead of showing an opaque spinner. Events look like:
+#   {"type": "stage", "stage": "excel", "status": "running", "current": 1, "total": 2,
+#    "detail": "TABEL1_1.xls / I.1"}
+# `status` is "running" or "done". Called synchronously on the event loop thread, so an
+# implementation must never block or await. None (the default) disables reporting.
+ProgressCb = Optional[Callable[[Dict[str, Any]], None]]
 
 # ── Rounding tolerance ────────────────────────────────────────────────────────
 # Values in the PDF are printed to 1 decimal place (e.g. 10.415,9 triliun or 10,8%).
@@ -609,6 +619,7 @@ async def verify_paired(
     llm: BaseChatModel,
     pdf_filename: str = "report.pdf",
     vision_llm: Optional[BaseChatModel] = None,
+    progress_cb: ProgressCb = None,
 ) -> PairedVerificationResponse:
     """Verify all quantitative claims in a PDF narrative against one or more Excel statistical tables.
 
@@ -625,15 +636,25 @@ async def verify_paired(
         vision_llm:     Vision-capable model (Gemini). When provided, used as the PRIMARY
                         model for structured fact extraction, since it handles Indonesian
                         number formats more reliably than Groq.
+        progress_cb:    Optional per-stage progress callback (see ProgressCb above). None
+                        disables reporting; the pipeline is otherwise identical.
 
     Returns:
         PairedVerificationResponse with per-fact verdicts.
     """
+    def emit(stage: str, status: str, **extra) -> None:
+        if progress_cb is not None:
+            progress_cb({"type": "stage", "stage": stage, "status": status, **extra})
+
     # Step 1: Parse all Excel sources (BI layout → generic heuristics → LLM structure mapping)
     parsed_sources: List[_ExcelSource] = []
     excel_parsers: List[str] = []
-    for excel_bytes, sheet_name, filename in excel_sources:
+    for i, (excel_bytes, sheet_name, filename) in enumerate(excel_sources, 1):
         logger.info("Parsing Excel sheet '%s' from '%s'", sheet_name, filename)
+        emit(
+            "excel", "running", current=i - 1, total=len(excel_sources),
+            detail=f"{filename} / {sheet_name}",
+        )
         table, parser_used = _parse_table_with_fallback(excel_bytes, sheet_name, llm=llm)
         logger.info(
             "Excel parsed via %s parser (%s axis): %d rows, unit='%s'",
@@ -641,6 +662,10 @@ async def verify_paired(
         )
         parsed_sources.append(_ExcelSource(table=table, filename=filename, sheet=sheet_name))
         excel_parsers.append(parser_used)
+    emit(
+        "excel", "done",
+        detail=f"{len(parsed_sources)} sumber · parser: {', '.join(excel_parsers)}",
+    )
 
     # Per-source label groups with table title context (used by the LLM to understand
     # what generic rows like 'Total' represent in each table). Categorical sources also
@@ -668,21 +693,28 @@ async def verify_paired(
     logger.info("Running structured fact extraction (combined row labels from %d source(s))", len(parsed_sources))
     extraction_primary = vision_llm if vision_llm is not None else llm
     extraction_fallback = llm if vision_llm is not None else None
+
+    def _on_chunk_progress(done: int, total: int) -> None:
+        emit("extract", "running", current=done, total=total, detail=f"{total} bagian teks")
+
     raw_facts = await extract_structured_facts_async(
         narrative_text,
         all_row_labels,
         extraction_primary,
         fallback_llm=extraction_fallback,
         source_labels=source_labels_for_extractor,
+        on_progress=_on_chunk_progress,
     )
     facts = _deduplicate_facts(raw_facts)
     logger.info("%d unique facts after deduplication (was %d)", len(facts), len(raw_facts))
+    emit("extract", "done", detail=f"{len(facts)} klaim ditemukan")
 
     excel_filenames = [src.filename for src in parsed_sources]
     excel_sheets = [src.sheet for src in parsed_sources]
     excel_units = [src.table.unit for src in parsed_sources]
 
     if not facts:
+        emit("compare", "done", detail="Tidak ada klaim untuk dibandingkan")
         return PairedVerificationResponse(
             pdf_filename=pdf_filename,
             excel_filenames=excel_filenames,
@@ -697,11 +729,16 @@ async def verify_paired(
         )
 
     # Step 3: Direct comparison (no SQL) — each fact is checked across all sources
+    emit("compare", "running", detail=f"{len(facts)} klaim")
     results: List[FactVerificationResult] = [_evaluate_fact(fact, parsed_sources) for fact in facts]
 
     entailed = sum(1 for r in results if r.verdict == "Entailed")
     refuted = sum(1 for r in results if r.verdict == "Refuted")
     inconclusive = sum(1 for r in results if r.verdict == "Inconclusive")
+    emit(
+        "compare", "done",
+        detail=f"{entailed} sesuai · {refuted} tidak sesuai · {inconclusive} tidak dapat dipastikan",
+    )
 
     return PairedVerificationResponse(
         pdf_filename=pdf_filename,
