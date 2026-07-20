@@ -36,7 +36,7 @@ def _fake_fact(**overrides):
         periods=[_fake_period()],
         claimed_value_raw="10.355,1",
         unit="triliun Rp",
-        context_quote="Uang beredar M2 pada April 2026 tercatat sebesar Rp10.355,1 triliun.",
+        anchor_quote="tercatat sebesar Rp10.355,1 triliun",
     )
     base.update(overrides)
     return SimpleNamespace(**base)
@@ -82,6 +82,43 @@ def test_parse_indonesian_number_valid_formats(raw, expected):
 
 def test_parse_indonesian_number_strips_rp_prefix_and_unit_suffix():
     assert _parse_indonesian_number("Rp10.355,1 triliun") == pytest.approx(10355.1)
+
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        ("(49,8)", -49.8),        # observed verbatim in BI M2 reports (yoy contraction)
+        ("(38,2)", -38.2),
+        ("(1.234,5)", -1234.5),   # thousands separator inside the parentheses
+        ("(49,8) triliun", -49.8),  # unit outside the parentheses
+        ("(-49,8)", -49.8),       # explicit minus inside is still a single negation
+    ],
+)
+def test_parse_indonesian_number_accounting_style_negatives(raw, expected):
+    # BI publications print negative values in parentheses. These used to fail float()
+    # and silently DROP the fact — a claim missing from the report with no trace.
+    assert _parse_indonesian_number(raw) == pytest.approx(expected)
+
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        ("(5,5%)", 5.5),    # 'Posisi GWM ... Januari 2020 (5,5%)' — annotation, positive
+        ("(3%)", 3.0),
+        ("(-5,5%)", -5.5),  # explicit minus still wins over the annotation reading
+    ],
+)
+def test_parse_indonesian_number_percent_in_parens_is_annotation_not_negative(raw, expected):
+    # The accounting-negative convention lives in TABLE cells, which never carry '%'
+    # inside the cell; parenthesized-with-% is prose annotation and must keep its sign.
+    assert _parse_indonesian_number(raw) == pytest.approx(expected)
+
+
+def test_parse_indonesian_number_does_not_misread_trailing_annotation_as_negative():
+    # '(yoy)' after a value must not flip the sign — parentheses only count when they
+    # wrap the entire numeric token.
+    assert _parse_indonesian_number("9,7") == pytest.approx(9.7)
+    assert _parse_indonesian_number("()") is None
 
 
 @pytest.mark.parametrize(
@@ -219,6 +256,98 @@ def test_finalize_facts_parses_value_operation():
     assert facts[0].claimed_value == pytest.approx(10355.1)
     assert facts[0].periods[0].month == "Apr"
     assert facts[0].page_number == 1
+
+
+# ---------------------------------------------------------------------------
+# Anchor → sentence expansion (the LLM emits a short anchor_quote; the public
+# context_quote is recovered from the source text by code)
+# ---------------------------------------------------------------------------
+
+def test_finalize_facts_expands_anchor_to_full_source_sentence():
+    facts = _finalize_facts([_fake_fact()], NARRATIVE)
+
+    assert facts[0].context_quote == (
+        "Uang beredar M2 pada April 2026 tercatat sebesar Rp10.355,1 triliun."
+    )
+
+
+def test_finalize_facts_expansion_extracts_middle_sentence_only():
+    text = (
+        "[== Halaman 1 ==]\n"
+        "Kalimat pertama membahas kondisi umum perekonomian nasional saat ini.\n"
+        "Uang beredar M2 pada April 2026 tercatat sebesar Rp10.355,1 triliun.\n"
+        "Kalimat ketiga membahas proyeksi bulan berikutnya secara lebih umum.\n"
+    )
+    facts = _finalize_facts([_fake_fact()], text)
+
+    assert facts[0].context_quote == (
+        "Uang beredar M2 pada April 2026 tercatat sebesar Rp10.355,1 triliun."
+    )
+
+
+def test_finalize_facts_expansion_does_not_split_on_sd_abbreviation():
+    # "s.d." (sampai dengan) appears in BI prose; its dots must not end the sentence.
+    text = (
+        "[== Halaman 1 ==]\n"
+        "Rata-rata M2 Januari s.d. April 2026 tercatat sebesar Rp10.355,1 triliun.\n"
+    )
+    facts = _finalize_facts([_fake_fact()], text)
+
+    assert facts[0].context_quote == (
+        "Rata-rata M2 Januari s.d. April 2026 tercatat sebesar Rp10.355,1 triliun."
+    )
+
+
+def test_finalize_facts_expansion_stops_at_page_marker_without_punctuation():
+    text = (
+        "[== Halaman 1 ==]\n"
+        "M2 pada April 2026 tercatat sebesar Rp10.355,1 triliun\n"  # no trailing period
+        "[== Halaman 2 ==]\n"
+        "Kalimat halaman berikutnya yang tidak boleh ikut terbawa sama sekali.\n"
+    )
+    facts = _finalize_facts([_fake_fact()], text)
+
+    assert facts[0].context_quote == "M2 pada April 2026 tercatat sebesar Rp10.355,1 triliun"
+    assert facts[0].page_number == 1
+
+
+def test_finalize_facts_falls_back_to_anchor_when_not_found_in_text():
+    raw = _fake_fact(anchor_quote="frasa yang tidak pernah muncul dalam teks sumber")
+    facts = _finalize_facts([raw], NARRATIVE)
+
+    assert facts[0].context_quote == "frasa yang tidak pernah muncul dalam teks sumber"
+    assert facts[0].page_number is None
+
+
+def test_finalize_facts_falls_back_to_anchor_for_runaway_expansion():
+    # A page with no sentence punctuation at all must not produce a giant "sentence".
+    filler = " ".join(["kata"] * 300)
+    text = f"[== Halaman 1 ==]\n{filler} tercatat sebesar Rp10.355,1 triliun {filler}\n"
+    facts = _finalize_facts([_fake_fact()], text)
+
+    assert facts[0].context_quote == "tercatat sebesar Rp10.355,1 triliun"
+    assert facts[0].page_number == 1
+
+
+def test_finalize_facts_value_and_yoy_anchors_expand_to_the_same_sentence():
+    # Prompt rule 3 creates two entries for "sebesar X atau tumbuh Y%" sentences,
+    # each anchored on just its own number — both must recover the shared sentence.
+    text = (
+        "[== Halaman 1 ==]\n"
+        "Uang beredar M2 pada April 2026 tercatat sebesar Rp10.355,1 triliun "
+        "atau tumbuh 9,7% (yoy).\n"
+    )
+    value_fact = _fake_fact()
+    yoy_fact = _fake_fact(
+        operation="yoy_growth", claimed_value_raw="9,7", unit="persen_yoy",
+        anchor_quote="tumbuh 9,7% (yoy)",
+    )
+    facts = _finalize_facts([value_fact, yoy_fact], text)
+
+    assert len(facts) == 2
+    assert facts[0].context_quote == facts[1].context_quote
+    assert facts[0].context_quote.startswith("Uang beredar M2")
+    assert facts[0].context_quote.endswith("(yoy).")
 
 
 def test_finalize_facts_skips_unparseable_claimed_value():
@@ -405,3 +534,68 @@ def test_extract_structured_facts_async_produces_same_result_as_sync():
     assert len(facts) == 1
     assert facts[0].claimed_value == pytest.approx(10355.1)
     assert facts[0].page_number == 1
+
+
+# ---------------------------------------------------------------------------
+# on_progress — drives the UI's per-chunk progress row (see /api/verify-paired-stream)
+# ---------------------------------------------------------------------------
+
+_TWO_PAGE_NARRATIVE = (
+    "[== Halaman 1 ==]\n"
+    "Uang beredar M2 pada April 2026 tercatat sebesar Rp10.355,1 triliun.\n"
+    "[== Halaman 2 ==]\n"
+    "Uang beredar M2 pada Maret 2026 tercatat sebesar Rp10.200,4 triliun.\n"
+)
+
+
+def test_extract_async_reports_chunk_total_before_any_llm_call_finishes():
+    """The UI needs the denominator up front, so a total must land before the first result."""
+    llm = _llm_with_facts([_fake_fact()])
+    calls = []
+
+    asyncio.run(extract_structured_facts_async(
+        _TWO_PAGE_NARRATIVE, ROW_LABELS, llm,
+        max_chars_per_chunk=50,
+        on_progress=lambda done, total: calls.append((done, total)),
+    ))
+
+    assert calls[0] == (0, 2)
+    assert calls[-1] == (2, 2)
+
+
+def test_extract_async_progress_counts_monotonically_up_to_total():
+    """Chunks finish out of order, so progress must count COMPLETED, never go backwards."""
+    llm = _llm_with_facts([_fake_fact()])
+    calls = []
+
+    asyncio.run(extract_structured_facts_async(
+        _TWO_PAGE_NARRATIVE, ROW_LABELS, llm,
+        max_chars_per_chunk=50,
+        on_progress=lambda done, total: calls.append((done, total)),
+    ))
+
+    done_seq = [done for done, _ in calls]
+    assert done_seq == sorted(done_seq)
+    assert all(total == 2 for _, total in calls)
+
+
+def test_extract_async_counts_a_failed_chunk_as_completed():
+    """A chunk whose LLM call fails still resolves — progress must not stall at 0/1 forever."""
+    llm = _llm_raising("boom")
+    calls = []
+
+    facts = asyncio.run(extract_structured_facts_async(
+        NARRATIVE, ROW_LABELS, llm,
+        on_progress=lambda done, total: calls.append((done, total)),
+    ))
+
+    assert facts == []
+    assert calls[-1] == (1, 1)
+
+
+def test_extract_async_without_on_progress_still_works():
+    llm = _llm_with_facts([_fake_fact()])
+
+    facts = asyncio.run(extract_structured_facts_async(NARRATIVE, ROW_LABELS, llm))
+
+    assert len(facts) == 1

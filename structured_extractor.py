@@ -23,7 +23,7 @@ import asyncio
 import logging
 import re
 from dataclasses import dataclass
-from typing import List, Literal, Optional, Tuple
+from typing import Callable, List, Literal, Optional, Tuple
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.prompts import ChatPromptTemplate
@@ -128,8 +128,15 @@ class _ExtractedFact(BaseModel):
             "Leave null when claimed_value_raw is null."
         ),
     )
-    context_quote: str = Field(
-        ..., description="The verbatim sentence or phrase from the narrative where this claim appears."
+    anchor_quote: str = Field(
+        ...,
+        description=(
+            "SHORT verbatim snippet — 3 to 8 consecutive words copied character-for-character "
+            "from the narrative — containing this claim's number (for trend claims with no "
+            "number: the key directional phrase). Examples: 'tercatat sebesar Rp10.355,1 triliun', "
+            "'tumbuh 9,7% (yoy)'. NEVER copy the whole sentence — the surrounding sentence is "
+            "recovered from the source text by code."
+        ),
     )
 
 
@@ -190,14 +197,18 @@ For each claim, output a JSON object with these fields:
                      null for is_increasing/is_decreasing/is_stable claims with no explicit number
   unit             : one of "triliun Rp", "miliar Rp", "persen_yoy", "persen", or null (matching
                      claimed_value_raw)
-  context_quote    : verbatim sentence/phrase from the text where this claim appears
+  anchor_quote     : SHORT verbatim snippet (3-8 consecutive words, copied character-for-character
+                     from the text) containing this claim's number — NOT the whole sentence. For
+                     trend claims with no number, quote the key directional phrase instead.
 
 IMPORTANT RULES:
 1. claimed_value_raw: copy the digit string verbatim — do NOT convert or interpret it.
    'Rp10.355,1 triliun' → '10.355,1'   |   '9,7% (yoy)' → '9,7'   |   '-9,2% (yoy)' → '-9,2'
 2. 'yoy' means year-on-year → operation='yoy_growth', unit='persen_yoy'.
 3. For each metric that has both an absolute value AND a growth rate in the same sentence, create
-   TWO separate entries: one operation='value', one operation='yoy_growth'.
+   TWO separate entries: one operation='value', one operation='yoy_growth' — each with its own
+   short anchor_quote covering just its own number (e.g. 'sebesar Rp10.355,1 triliun' vs
+   'tumbuh 9,7% (yoy)'), never the shared full sentence.
 4. For metric_label in each period: use the closest match from the REFERENCE METRIC LIST if one
    clearly fits; otherwise use the exact metric name as it appears in the narrative text. Never skip
    a claim just because it has no reference list match.
@@ -205,6 +216,8 @@ IMPORTANT RULES:
    never summarize a range as just its start and end.
 6. col_label is ONLY for non-time-series tables. If a claim mentions a time period, always use
    year+month and leave col_label null — never fill both.
+7. anchor_quote must be an EXACT substring of the narrative (same spelling, punctuation and
+   digits) so code can locate it afterwards — never paraphrase, translate, or re-punctuate it.
 """
 
 _HUMAN_TEMPLATE = """\
@@ -265,7 +278,12 @@ class PeriodPoint:
 
 
 class ExtractedFact:
-    """Plain-Python equivalent of _ExtractedFact, decoupled from LLM schema."""
+    """Plain-Python equivalent of _ExtractedFact, decoupled from LLM schema.
+
+    context_quote is the full source sentence recovered deterministically around the
+    LLM's short anchor_quote (or the anchor verbatim when it could not be located) —
+    the LLM never emits whole sentences, to keep extraction output-token cost down.
+    """
     __slots__ = ("operation", "periods", "claimed_value", "unit", "context_quote", "page_number")
 
     def __init__(
@@ -304,21 +322,42 @@ def _parse_indonesian_number(raw: str) -> Optional[float]:
       '8.516,0'   → 8516.0
       '-9,2'      → -9.2
       '2.396,5'   → 2396.5
+      '(49,8)'    → -49.8   (accounting-style negative, the BI table convention)
 
     Returns None and logs a warning if the string cannot be parsed.
     """
+    def unwrap_parens(tok: str, neg: bool) -> Tuple[str, bool]:
+        # Parentheses wrapping the WHOLE token come in two kinds, told apart by '%':
+        #   '(49,8)'  — accounting-style negative, the BI TABLE convention → -49,8.
+        #   '(5,5%)'  — prose annotation ('Posisi GWM ... Januari 2020 (5,5%)'), a
+        #               POSITIVE value; table cells never carry '%' inside the cell.
+        # Partial wraps like '9,7 (yoy)' never reach here, so no sign flip there either.
+        if len(tok) > 2 and tok.startswith('(') and tok.endswith(')'):
+            inner = tok[1:-1].strip()
+            if '%' not in inner:
+                neg = True
+            if inner.startswith('-'):  # '(-5,5%)' / '(-49,8)': one negation either way
+                inner = inner[1:].strip()
+                neg = True
+            return inner, neg
+        return tok, neg
+
     s = raw.strip()
     if not s:
         return None
 
-    negative = s.startswith('-')
-    if negative:
+    s, negative = unwrap_parens(s, False)
+    if s.startswith('-'):
+        negative = True
         s = s[1:].strip()
 
     # Strip any stray Rp prefix or unit words that the LLM may have included despite instructions
     s = re.sub(r'^Rp\s*', '', s, flags=re.IGNORECASE)
     s = re.sub(r'\s*(triliun|miliar|persen|%)[^\d]*$', '', s, flags=re.IGNORECASE)
     s = s.strip().rstrip('*').strip()
+    # Unwrap again: in '(49,8) triliun' the parentheses only surround the number, so they
+    # are still intact after the unit suffix was stripped off.
+    s, negative = unwrap_parens(s, negative)
     # Remove any spaces still sitting inside the number. Indonesian numerals never contain a
     # space, so an interior space is a PDF-extraction artifact (e.g. "2 1,3" -> "21,3", "8 ,9"
     # -> "8,9"); left in, it made float() raise and the whole fact was dropped.
@@ -341,43 +380,100 @@ def _parse_indonesian_number(raw: str) -> Optional[float]:
 
 
 # ---------------------------------------------------------------------------
-# Deterministic page-number lookup
+# Deterministic anchor location: page number + sentence expansion
 # ---------------------------------------------------------------------------
 
 _PAGE_MARKER_PATTERN = re.compile(r'\[== Halaman (\d+) ==\]')
 
+# A sentence boundary is [.!?] NOT preceded by a single-letter token — that guard keeps
+# Indonesian abbreviations ("s.d.", "a.l.") and list numbering ("1.") from splitting a
+# sentence. Digit-internal dots ("10.355,1") never match because no whitespace follows.
+# "==]" treats the end of a page marker as a boundary too.
+_SENT_START_RE = re.compile(r"(?:(?<!\b\w)[.!?]|==\])\s+(?=[\"'“(\[*]*\s*[A-Z0-9])")
+_SENT_END_RE = re.compile(r"(?<!\b\w)[.!?](?=\s|$)")
 
-def _find_page_number(context_quote: str, full_text: str) -> Optional[int]:
-    """Find which page a context quote belongs to by searching the page-marked text.
 
-    Slides a 6-word window across the context_quote and searches each window in
-    full_text. This handles cases where the LLM's quote starts mid-sentence
-    (so the first N words differ from what appears in the source text).
-    The most recent [== Halaman N ==] marker before the match position is the page.
-    Returns None when no window matches.
+def _normalize_ws(text: str) -> str:
+    """Collapse all whitespace runs to single spaces (pypdf line breaks → spaces)."""
+    return re.sub(r'\s+', ' ', text)
 
-    Searches a whitespace-normalised copy of full_text so that LLM quotes
-    (which join pypdf line breaks with spaces) still match the source text.
+
+def _locate_anchor(anchor: str, normalized: str) -> Optional[Tuple[int, int]]:
+    """Find a verbatim anchor inside whitespace-normalized text.
+
+    Tries an exact substring match first (the common case for short anchors), then
+    falls back to sliding a 6-word window across the anchor so longer quotes whose
+    first words differ from the source (mid-sentence starts, LLM prefix drift) still
+    match. Returns the (start, end) span of whatever was matched, or None.
     """
-    # Normalise to single spaces so that newlines between pypdf lines don't
-    # prevent matching against LLM quotes that join those lines with a space.
-    normalized = re.sub(r'\s+', ' ', full_text)
+    anchor_norm = _normalize_ws(anchor.strip())
+    if len(anchor_norm) >= 10:
+        pos = normalized.find(anchor_norm)
+        if pos != -1:
+            return pos, pos + len(anchor_norm)
 
-    words = context_quote.split()
-    n = 6  # anchor length in words
+    words = anchor_norm.split()
+    n = 6  # window length in words
     if len(words) < n:
         n = max(3, len(words))
 
     for start in range(min(len(words) - n + 1, 8)):  # slide up to 8 positions
-        anchor = " ".join(words[start : start + n])
-        if len(anchor) < 15:
+        window = " ".join(words[start : start + n])
+        if len(window) < 15:
             continue
-        pos = normalized.find(anchor)
+        pos = normalized.find(window)
         if pos != -1:
-            before = normalized[:pos]
-            matches = _PAGE_MARKER_PATTERN.findall(before)
-            return int(matches[-1]) if matches else None
+            return pos, pos + len(window)
     return None
+
+
+def _page_at(normalized: str, pos: int) -> Optional[int]:
+    """Page of the most recent [== Halaman N ==] marker before pos, or None."""
+    matches = _PAGE_MARKER_PATTERN.findall(normalized, 0, pos)
+    return int(matches[-1]) if matches else None
+
+
+def _find_page_number(context_quote: str, full_text: str) -> Optional[int]:
+    """Find which page a quote belongs to by searching the page-marked text."""
+    normalized = _normalize_ws(full_text)
+    span = _locate_anchor(context_quote, normalized)
+    return _page_at(normalized, span[0]) if span else None
+
+
+def _expand_anchor_to_sentence(
+    normalized: str, start: int, end: int, max_len: int = 600
+) -> Optional[str]:
+    """Expand a located anchor span to the full source sentence containing it.
+
+    The LLM only emits a short anchor (to keep extraction output-token cost down —
+    measured latency is proportional to output tokens); the display sentence is
+    recovered here from the source text instead, which is also immune to LLM
+    misquoting. Returns None when the expansion is empty or implausibly long
+    (runaway text with no sentence punctuation) — the caller then falls back to
+    showing the anchor itself.
+    """
+    sent_start = 0
+    for m in _SENT_START_RE.finditer(normalized):
+        if m.end() > start:
+            break
+        sent_start = m.end()
+
+    # The anchor may itself end with the sentence's final punctuation.
+    search_from = end - 1 if end > start and normalized[end - 1] in '.!?' else end
+    end_match = _SENT_END_RE.search(normalized, search_from)
+    next_marker = normalized.find('[== Halaman', end)
+
+    candidates = [len(normalized)]
+    if end_match:
+        candidates.append(end_match.end())
+    if next_marker != -1:
+        candidates.append(next_marker)  # page break ends a sentence even without punctuation
+    sent_end = min(candidates)
+
+    sentence = _PAGE_MARKER_PATTERN.sub('', normalized[sent_start:sent_end]).strip()
+    if not sentence or len(sentence) > max_len:
+        return None
+    return sentence
 
 
 # ---------------------------------------------------------------------------
@@ -505,12 +601,18 @@ def _split_into_page_chunks(filtered_text: str, max_chars: int) -> List[str]:
 # ---------------------------------------------------------------------------
 
 def _finalize_facts(raw_facts: List[_ExtractedFact], filtered_text: str) -> List[ExtractedFact]:
-    """Normalize months, parse claimed values, and resolve page numbers for raw LLM output.
+    """Normalize months, parse claimed values, and resolve pages + quotes for raw LLM output.
+
+    The LLM only emits a short anchor_quote per fact; the full display sentence
+    (public context_quote) and the page number are both recovered here by locating
+    that anchor in the source text. When the anchor cannot be found, the anchor
+    itself becomes the quote and the page stays None.
 
     Skips (with a warning) any fact with an unrecognised month or an unparseable/missing
     claimed_value_raw, except for is_increasing/is_decreasing/is_stable where a null
     claimed_value_raw is expected (pure direction claims with no explicit number).
     """
+    normalized = _normalize_ws(filtered_text)
     facts: List[ExtractedFact] = []
     for f in raw_facts:
         periods: List[PeriodPoint] = []
@@ -548,13 +650,19 @@ def _finalize_facts(raw_facts: List[_ExtractedFact], filtered_text: str) -> List
                 logger.warning("Skipping fact with unparseable claimed_value_raw=%r", f.claimed_value_raw)
                 continue
 
-        page_num = _find_page_number(f.context_quote, filtered_text)
+        span = _locate_anchor(f.anchor_quote, normalized)
+        if span is not None:
+            page_num = _page_at(normalized, span[0])
+            quote = _expand_anchor_to_sentence(normalized, span[0], span[1]) or f.anchor_quote
+        else:
+            page_num = None
+            quote = f.anchor_quote
         facts.append(ExtractedFact(
             operation=f.operation,
             periods=periods,
             claimed_value=claimed_value,
             unit=f.unit,
-            context_quote=f.context_quote,
+            context_quote=quote,
             page_number=page_num,
         ))
 
@@ -668,6 +776,7 @@ async def extract_structured_facts_async(
     max_chars_per_chunk: int = 6_000,
     fallback_llm: Optional[BaseChatModel] = None,
     source_labels: Optional[List[Tuple[str, List[str]]]] = None,
+    on_progress: Optional[Callable[[int, int], None]] = None,
 ) -> List[ExtractedFact]:
     """Parallel version of extract_structured_facts — all chunks are processed concurrently.
 
@@ -679,6 +788,12 @@ async def extract_structured_facts_async(
         source_labels: Optional list of (table_title, row_labels) per source.
                        When provided, the LLM sees each source's title so it
                        can map generic 'Total' rows to the right aggregate metric.
+        on_progress:   Optional callback invoked as (completed_chunks, total_chunks) —
+                       once with (0, total) as soon as the chunk count is known, then
+                       after each chunk's LLM call returns. This step dominates the
+                       pipeline's wall-clock time, so it is the only one worth
+                       reporting at sub-step granularity. Called on the event loop
+                       thread; keep it non-blocking (it must not do I/O or await).
     """
     chain = _EXTRACTION_PROMPT | llm.with_structured_output(_ExtractedFacts)
 
@@ -691,10 +806,20 @@ async def extract_structured_facts_async(
         "Processing %d chunk(s) in parallel (max %d chars each)", len(chunks), max_chars_per_chunk
     )
 
+    completed = 0
+    if on_progress is not None:
+        on_progress(0, len(chunks))
+
     async def _process_chunk(i: int, chunk: str) -> List[_ExtractedFact]:
+        nonlocal completed
         logger.info("Chunk %d/%d: %d chars", i, len(chunks), len(chunk))
         payload = {"row_labels_block": row_labels_block, "narrative_text": chunk}
         result = await _ainvoke_extraction(chain, payload, fallback_llm)
+        # Chunks finish out of order; report how many are DONE, not which one, so the
+        # count never appears to go backwards.
+        completed += 1
+        if on_progress is not None:
+            on_progress(completed, len(chunks))
         return result.facts if result is not None else []
 
     chunk_results = await asyncio.gather(
